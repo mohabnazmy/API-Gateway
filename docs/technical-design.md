@@ -324,6 +324,7 @@ CREATE TABLE admin_users (
   id            INTEGER PRIMARY KEY,
   username      TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,              -- bcrypt/argon2
+  token_version INTEGER NOT NULL DEFAULT 1, -- bump to invalidate a user's session JWTs
   created_at    TEXT NOT NULL
 );
 
@@ -336,6 +337,12 @@ CREATE TABLE config_version (             -- bumped on every change → drives r
 - **Migrations** run at startup (embedded SQL, versioned).
 - **Secrets are referenced, not stored**: `jwt_secret_ref` names an env var; the
   actual HS secret lives in the environment / secrets manager.
+- **Swap-friendly access (single-node decision):** the first release targets
+  **single-node** SQLite (multi-node is deferred — see [§20](#20-roadmap)). All
+  DB access goes through a **repository interface** in `internal/store`, so
+  swapping SQLite for a shared Postgres/etcd backend later is a contained change
+  with no impact on the data plane, registry, or admin API. Cheap insurance taken
+  now even though multi-node isn't a current requirement.
 
 ---
 
@@ -382,7 +389,7 @@ REST/JSON under `/admin/api`, served on the **private admin listener** only.
 | `GET /admin/api/api-keys` | List keys (metadata only — never the secret). |
 | `POST /admin/api/api-keys` | Create a key → returns plaintext **once**; stores only the hash. |
 | `DELETE /admin/api/api-keys/{id}` | Revoke a key. |
-| `POST /admin/api/auth/login` | Admin login → session token. |
+| `POST /admin/api/auth/login` | Admin login → stateless JWT session token. |
 | `GET /admin/api/health` | Control-plane health. |
 
 - Every write **validates** (path prefix shape, upstream URL, referenced secret
@@ -411,14 +418,23 @@ The admin surface reconfigures the gateway, so it's a sensitive attack surface:
   an internal network; expect operators to reach it via VPN / bastion / ingress
   with its own auth.
 - **Admin login** — username + password (hashed with bcrypt/argon2 in
-  `admin_users`); successful login issues a short-lived session token used as a
-  Bearer for subsequent Admin API calls.
+  `admin_users`). On success the server issues a **stateless JWT session token**
+  (HS256, signed with `GATEWAY_ADMIN_JWT_SECRET`), sent as a Bearer on subsequent
+  Admin API calls and verified by signature alone — no session table.
+  - **Decision (resolved):** stateless JWT over server-side sessions, for a
+    simpler single-binary model. *Note this is the admin-session token system —
+    entirely separate from the data-plane JWT that authenticates API clients.*
+  - **Revocation trade-off:** stateless JWTs can't be individually revoked before
+    expiry, so we mitigate with **short token lifetimes** (e.g. 15–60 min) plus
+    refresh-on-activity. A `token_version` claim checked against `admin_users`
+    (bump it to invalidate all of a user's tokens) is the planned escape hatch if
+    instant revocation becomes a hard requirement.
 - **Bootstrap admin** — first run seeds an admin from env
   (`GATEWAY_ADMIN_USER` / `GATEWAY_ADMIN_PASSWORD`), forced rotated after first
   login; thereafter managed in the store.
 - **API keys** stored hashed; plaintext shown **once** at creation.
-- **Roadmap:** admin RBAC (viewer vs editor), audit log of config changes, CSRF
-  protections for cookie-based sessions.
+- **Roadmap:** admin RBAC (viewer vs editor), audit log of config changes,
+  per-user `token_version` revocation.
 
 ---
 
@@ -434,6 +450,7 @@ secrets** — the things needed before/around the store:
 | `GATEWAY_DB_PATH` | `./gateway.db` | SQLite file path (mount on a volume). |
 | `GATEWAY_ADMIN_USER` | `admin` | Bootstrap admin username (first run only). |
 | `GATEWAY_ADMIN_PASSWORD` | — | Bootstrap admin password (first run only). |
+| `GATEWAY_ADMIN_JWT_SECRET` | — | HS256 secret for signing admin **session** tokens (distinct from data-plane JWT). |
 | `GATEWAY_JWT_SECRET` | — | HS secret, referenced by `jwt_secret_ref` in route policies. |
 | `GATEWAY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `GATEWAY_METRICS_PATH` | `/metrics` | Prometheus scrape path (data plane). |
@@ -504,9 +521,13 @@ Each phase is independently shippable and testable.
 - **Trusted-proxy model:** gate `X-Forwarded-For` parsing behind a trusted-CIDR
   allow-list to prevent client-IP spoofing?
 - **JWT for GA:** ship HS256-only first, or include RS256/JWKS from day one?
-- **Admin sessions:** stateless JWT sessions vs server-side session tokens for the
-  Admin API — which fits the single-binary model best?
-- **Multi-node timeline:** how soon do we need shared-config horizontal scaling
-  (it's the main thing SQLite defers)?
 - **Authorization scope:** do we need per-consumer/tenant scoping of limits & auth?
+
+### Resolved
+
+- **Admin sessions** → **stateless JWT** (HS256, short-lived; `token_version`
+  escape hatch for revocation). See [§15](#15-admin-authentication--security).
+- **Multi-node timeline** → **not now.** First release is single-node SQLite; DB
+  access kept behind a repository interface so a shared-store swap stays cheap.
+  See [§11](#11-control-plane--config-store-sqlite) / [§20](#20-roadmap).
 ```
