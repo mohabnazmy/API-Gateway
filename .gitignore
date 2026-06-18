@@ -1,0 +1,17 @@
+# Compiled binary
+/gateway
+/tmp/
+
+# SQLite config store (control plane, later phases)
+*.db
+*.db-shm
+*.db-wal
+
+# Go build/test artifacts
+*.out
+*.test
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
