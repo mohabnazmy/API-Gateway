@@ -15,6 +15,17 @@ for a plain-language guide to the concepts and auth decisions.
 
 ## Quick start
 
+The fastest way to start is from the example env file:
+
+```bash
+go build -o gateway ./cmd/gateway
+cp .env.example .env          # then edit secrets/routes
+set -a; source .env; set +a   # load into the shell
+./gateway
+```
+
+Or configure inline:
+
 ```bash
 # Build
 go build -o gateway ./cmd/gateway

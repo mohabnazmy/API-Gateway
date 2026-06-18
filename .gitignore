@@ -11,6 +11,11 @@
 *.out
 *.test
 
+# Local env file with real secrets (keep .env.example tracked)
+.env
+.env.local
+!.env.example
+
 # Editor / OS
 .DS_Store
 .idea/
