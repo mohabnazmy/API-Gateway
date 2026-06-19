@@ -46,6 +46,11 @@ func gatewayWith(t *testing.T, apiKeys map[string]struct{}, trusted []*net.IPNet
 
 func getCode(t *testing.T, url string, headers map[string]string) int {
 	t.Helper()
+	return doGet(t, url, headers).StatusCode
+}
+
+func doGet(t *testing.T, url string, headers map[string]string) *http.Response {
+	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -55,7 +60,40 @@ func getCode(t *testing.T, url string, headers map[string]string) int {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode
+	return resp
+}
+
+// Rate-limited responses carry standard headers so clients can see remaining
+// allowance and when capacity returns; 429s include Retry-After.
+func TestRateLimitHeaders(t *testing.T) {
+	routes := []model.Route{
+		{Name: "lim", PathPrefix: "/lim", Upstream: "BACKEND", StripPrefix: true,
+			RateLimit: model.RateLimitPolicy{Algorithm: "token_bucket", RPS: 1, Burst: 1}},
+	}
+	ts, cleanup := gatewayWith(t, nil, nil, routes, okBackend)
+	defer cleanup()
+
+	first := doGet(t, ts.URL+"/lim/x", nil)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first request = %d, want 200", first.StatusCode)
+	}
+	if got := first.Header.Get("RateLimit-Limit"); got != "1" {
+		t.Errorf("RateLimit-Limit = %q, want %q (from config)", got, "1")
+	}
+	if first.Header.Get("RateLimit-Remaining") == "" || first.Header.Get("X-RateLimit-Remaining") == "" {
+		t.Error("expected RateLimit-Remaining and X-RateLimit-Remaining on an allowed request")
+	}
+
+	second := doGet(t, ts.URL+"/lim/x", nil)
+	if second.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second request = %d, want 429", second.StatusCode)
+	}
+	if got := second.Header.Get("Retry-After"); got == "" || got == "0" {
+		t.Errorf("429 Retry-After = %q, want a positive seconds value", got)
+	}
+	if got := second.Header.Get("RateLimit-Remaining"); got != "0" {
+		t.Errorf("429 RateLimit-Remaining = %q, want %q", got, "0")
+	}
 }
 
 func hsToken(t *testing.T, secret string, claims jwt.MapClaims) string {
