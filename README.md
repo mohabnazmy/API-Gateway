@@ -67,6 +67,9 @@ Bootstrap configuration comes from environment variables:
 | `GATEWAY_API_KEYS` | — | Comma-separated accepted API keys. |
 | `GATEWAY_RATE_LIMIT_RPS` | `100` | Default per-client rate (routes may override). |
 | `GATEWAY_RATE_LIMIT_BURST` | `200` | Default burst (routes may override). |
+| `GATEWAY_TRUSTED_PROXIES` | — | Comma-separated CIDRs/IPs whose `X-Forwarded-For` is trusted. Empty = trust none (XFF ignored). |
+| `GATEWAY_UPSTREAM_DIAL_TIMEOUT` | `10s` | Connection dial timeout to upstreams. |
+| `GATEWAY_UPSTREAM_RESPONSE_TIMEOUT` | `30s` | Max wait for upstream response headers. |
 | `GATEWAY_READ_TIMEOUT` / `_WRITE_TIMEOUT` / `_IDLE_TIMEOUT` | `15s` / `30s` / `60s` | HTTP server timeouts. |
 | `GATEWAY_SHUTDOWN_TIMEOUT` | `15s` | Graceful-shutdown drain limit. |
 | `GATEWAY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
