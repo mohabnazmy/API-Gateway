@@ -5,14 +5,37 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
+
+// DefaultEnvFile is the env file loaded when no path is given.
+const DefaultEnvFile = ".env"
+
+// LoadDotEnv loads variables from a .env file into the process environment so
+// that Load can read them. Variables already set in the environment take
+// precedence (the file only fills in what's unset). A missing file is not an
+// error — env vars may be supplied directly (e.g. in production).
+//
+// This is the seam for additional config sources: a YAML loader will live
+// alongside this in a later phase.
+func LoadDotEnv(path string) error {
+	if path == "" {
+		path = DefaultEnvFile
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return godotenv.Load(path)
+}
 
 // Config is the resolved bootstrap configuration.
 type Config struct {

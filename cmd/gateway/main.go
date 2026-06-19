@@ -17,6 +17,14 @@ import (
 )
 
 func main() {
+	// Load a .env file into the environment if present (path overridable via
+	// GATEWAY_ENV_FILE). Real environment variables still take precedence, so
+	// this is purely a local-dev convenience.
+	if err := config.LoadDotEnv(os.Getenv("GATEWAY_ENV_FILE")); err != nil {
+		newLogger(slog.LevelInfo).Error("failed to load env file", "error", err)
+		os.Exit(1)
+	}
+
 	cfg, err := config.Load()
 	logger := newLogger(logLevel(cfg, err))
 	if err != nil {

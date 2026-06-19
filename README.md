@@ -15,14 +15,19 @@ for a plain-language guide to the concepts and auth decisions.
 
 ## Quick start
 
-The fastest way to start is from the example env file:
+The fastest way to start is from the example env file. The gateway
+**auto-loads `.env`** from the working directory on startup — no sourcing
+needed:
 
 ```bash
 go build -o gateway ./cmd/gateway
 cp .env.example .env          # then edit secrets/routes
-set -a; source .env; set +a   # load into the shell
-./gateway
+./gateway                     # .env is loaded automatically
 ```
+
+Point it at a different file with `GATEWAY_ENV_FILE=/path/to/file`. Real
+environment variables always take precedence over the file, and a missing
+`.env` is fine (values fall back to defaults / direct env vars).
 
 Or configure inline:
 
@@ -78,8 +83,19 @@ Bootstrap configuration comes from environment variables:
 | `methods` | string[] | Optional HTTP method allow-list. |
 | `auth.require_auth` | bool | Gate the route behind authentication. |
 | `auth.methods` | string[] | Accepted credentials: `jwt`, `api_key` (empty = any configured). |
-| `rate_limit.algorithm` | string | `token_bucket` (Phase 1). |
-| `rate_limit.rps` / `.burst` | number | Sustained rate and burst. `rps <= 0` disables limiting. |
+| `rate_limit.algorithm` | string | `token_bucket` (default), `leaky_bucket`, `fixed_window`, or `sliding_window`. |
+| `rate_limit.rps` | number | Sustained requests/sec. `rps <= 0` disables limiting. |
+| `rate_limit.burst` | number | Bucket capacity (token/leaky bucket). |
+| `rate_limit.window_sec` | number | Window length for the window algorithms (default `1`); per-window limit = `rps × window_sec`. |
+
+#### Rate-limit algorithms
+
+| Algorithm | Behavior | Params used |
+|-----------|----------|-------------|
+| `token_bucket` *(default)* | Steady refill + burst allowance; tolerant of short spikes. | `rps`, `burst` |
+| `leaky_bucket` | Constant drain rate; strict traffic shaping, no bursts. | `rps`, `burst` (capacity) |
+| `fixed_window` | Count per fixed window; simplest, allows boundary bursts. | `rps`, `window_sec` |
+| `sliding_window` | Rolling window; smooths the fixed-window boundary burst. | `rps`, `window_sec` |
 
 ## Endpoints
 
