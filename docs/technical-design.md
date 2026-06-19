@@ -2,6 +2,10 @@
 
 **Status:** Draft · **Owner:** mohabnazmy · **Last updated:** 2026-06-19 · **Language:** Go + React
 
+> See [architecture.md](./architecture.md) for the application architecture with
+> diagrams (system context, two-plane view, module map, request lifecycle,
+> hot-reload, rate limiting, deployment).
+
 ---
 
 ## 1. Overview
