@@ -12,18 +12,35 @@ import (
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
 
+// Result reports a key's consumption and timing after an Allow decision, so the
+// caller can surface standard rate-limit headers to clients. All values derive
+// from the route's configured limit.
+type Result struct {
+	// Limit is the configured allowance: burst (token/leaky bucket) or the
+	// per-window limit (window algorithms).
+	Limit int
+	// Remaining is the allowance left for this key after the call.
+	Remaining int
+	// Reset is the time until the allowance is fully replenished / the window
+	// rolls over.
+	Reset time.Duration
+	// RetryAfter is the suggested wait before retrying. Non-zero only when the
+	// request was denied.
+	RetryAfter time.Duration
+}
+
 // Limiter decides whether a request identified by key (e.g. client IP) is
-// allowed. Implementations are safe for concurrent use. Stop releases any
-// background resources and must be called when the limiter is discarded (e.g.
-// when a config snapshot is replaced).
+// allowed, and reports consumption/timing via Result. Implementations are safe
+// for concurrent use. Stop releases any background resources and must be called
+// when the limiter is discarded (e.g. when a config snapshot is replaced).
 type Limiter interface {
-	Allow(key string) bool
+	Allow(key string) (bool, Result)
 	Stop()
 }
 
 // bucket is one key's algorithm instance. Implementations guard their own state.
 type bucket interface {
-	allow() bool
+	allow() (bool, Result)
 }
 
 // New builds a Limiter for the given policy. It returns (nil, nil) when the
@@ -91,7 +108,7 @@ func newKeyed(factory func() bucket) *keyed {
 	return k
 }
 
-func (k *keyed) Allow(key string) bool {
+func (k *keyed) Allow(key string) (bool, Result) {
 	k.mu.Lock()
 	v, ok := k.visitors[key]
 	if !ok {

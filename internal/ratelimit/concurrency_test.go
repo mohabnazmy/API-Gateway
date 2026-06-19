@@ -55,7 +55,7 @@ func TestTokenBucketBurstExactUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if l.Allow("same-key") {
+			if ok, _ := l.Allow("same-key"); ok {
 				mu.Lock()
 				allowed++
 				mu.Unlock()

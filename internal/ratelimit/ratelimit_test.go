@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
@@ -29,15 +30,74 @@ func TestTokenBucketBurstThenDeny(t *testing.T) {
 	}
 	defer l.Stop()
 
-	if !l.Allow("ip-a") || !l.Allow("ip-a") {
-		t.Fatal("first two requests should be allowed (burst = 2)")
+	if a1, _ := l.Allow("ip-a"); !a1 {
+		t.Fatal("first request should be allowed")
 	}
-	if l.Allow("ip-a") {
+	if a2, _ := l.Allow("ip-a"); !a2 {
+		t.Fatal("second request should be allowed (burst = 2)")
+	}
+	if a3, _ := l.Allow("ip-a"); a3 {
 		t.Fatal("third immediate request should be denied")
 	}
 	// A different key has an independent bucket.
-	if !l.Allow("ip-b") {
+	if b1, _ := l.Allow("ip-b"); !b1 {
 		t.Fatal("a different key should have its own bucket")
+	}
+}
+
+func TestResultReportsConsumptionAndRetry(t *testing.T) {
+	// burst 3 → first call leaves ~2 remaining; limit reflects config.
+	l, err := New(model.RateLimitPolicy{Algorithm: "token_bucket", RPS: 1, Burst: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+
+	ok, res := l.Allow("k")
+	if !ok {
+		t.Fatal("first request should be allowed")
+	}
+	if res.Limit != 3 {
+		t.Fatalf("Limit = %d, want 3 (from config)", res.Limit)
+	}
+	if res.Remaining != 2 {
+		t.Fatalf("Remaining = %d, want 2", res.Remaining)
+	}
+
+	// Exhaust the bucket, then the next call is denied with a positive RetryAfter.
+	l.Allow("k")
+	l.Allow("k")
+	ok, res = l.Allow("k")
+	if ok {
+		t.Fatal("request beyond burst should be denied")
+	}
+	if res.Remaining != 0 {
+		t.Fatalf("denied Remaining = %d, want 0", res.Remaining)
+	}
+	if res.RetryAfter <= 0 {
+		t.Fatalf("denied result should carry RetryAfter > 0, got %v", res.RetryAfter)
+	}
+}
+
+func TestWindowResultRetryAfter(t *testing.T) {
+	// limit = rps × window = 0.2 × 10s = 2.
+	l, err := New(model.RateLimitPolicy{Algorithm: "fixed_window", RPS: 0.2, WindowSec: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+
+	l.Allow("k")
+	l.Allow("k")
+	ok, res := l.Allow("k")
+	if ok {
+		t.Fatal("third request should be denied (limit 2)")
+	}
+	if res.Limit != 2 {
+		t.Fatalf("Limit = %d, want 2", res.Limit)
+	}
+	if res.RetryAfter <= 0 || res.RetryAfter > 10*time.Second {
+		t.Fatalf("RetryAfter = %v, want (0, 10s]", res.RetryAfter)
 	}
 }
 
@@ -56,7 +116,7 @@ func TestDefaultAlgorithmIsTokenBucket(t *testing.T) {
 func allowN(l Limiter, key string, n int) int {
 	allowed := 0
 	for i := 0; i < n; i++ {
-		if l.Allow(key) {
+		if ok, _ := l.Allow(key); ok {
 			allowed++
 		}
 	}

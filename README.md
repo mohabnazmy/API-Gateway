@@ -100,6 +100,18 @@ Bootstrap configuration comes from environment variables:
 | `fixed_window` | Count per fixed window; simplest, allows boundary bursts. | `rps`, `window_sec` |
 | `sliding_window` | Rolling window; smooths the fixed-window boundary burst. | `rps`, `window_sec` |
 
+#### Rate-limit response headers
+
+Every response on a rate-limited route reports the client's consumption (the
+`Limit` reflects the route's configured allowance):
+
+| Header | Meaning |
+|--------|---------|
+| `RateLimit-Limit` / `X-RateLimit-Limit` | configured allowance (burst, or per-window limit) |
+| `RateLimit-Remaining` / `X-RateLimit-Remaining` | remaining allowance for this client |
+| `RateLimit-Reset` / `X-RateLimit-Reset` | seconds until the allowance replenishes |
+| `Retry-After` | on `429` only — seconds the client should wait before retrying |
+
 ## Endpoints
 
 - `GET /healthz` — liveness (`200 {"status":"ok"}`).
