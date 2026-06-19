@@ -2,105 +2,137 @@
 
 Visual companion to the [technical design](./technical-design.md). It documents
 the **current implementation** (Phase 1 data plane + security hardening) and
-shows where the planned control plane (Phases 2–4) attaches. Diagrams are
-Mermaid (rendered inline by GitHub) with ASCII fallbacks where useful.
+shows where the planned control plane (Phases 2–4) attaches. All diagrams are
+Mermaid (rendered inline by GitHub).
+
+### Colour legend
+
+```mermaid
+flowchart LR
+    a["Client / external"]:::client
+    b["Data plane"]:::gw
+    c["Upstream service"]:::up
+    d["Config / registry"]:::store
+    e["Observability"]:::obs
+    f["Error / reject"]:::err
+    g["Planned (Phase 2-4)"]:::planned
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef up fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef obs fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef err fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,color:#374151,stroke-dasharray:5 5;
+```
 
 - [1. System context](#1-system-context)
 - [2. Two-plane architecture](#2-two-plane-architecture)
 - [3. Module / package map](#3-module--package-map)
-- [4. Request lifecycle](#4-request-lifecycle)
-- [5. Configuration & hot-reload](#5-configuration--hot-reload)
-- [6. Rate-limiting design](#6-rate-limiting-design)
-- [7. Outcomes & status codes](#7-outcomes--status-codes)
-- [8. Deployment view](#8-deployment-view)
-- [9. Current vs planned](#9-current-vs-planned)
+- [4. Middleware pipeline](#4-middleware-pipeline)
+- [5. Request lifecycle (sequence)](#5-request-lifecycle-sequence)
+- [6. Authentication decision](#6-authentication-decision)
+- [7. Client-IP resolution (trusted proxy)](#7-client-ip-resolution-trusted-proxy)
+- [8. Configuration & hot-reload](#8-configuration--hot-reload)
+- [9. Snapshot lifecycle](#9-snapshot-lifecycle)
+- [10. Rate-limiting design](#10-rate-limiting-design)
+- [11. Outcomes & status codes](#11-outcomes--status-codes)
+- [12. Deployment view](#12-deployment-view)
+- [13. Current vs planned](#13-current-vs-planned)
 
 ---
 
 ## 1. System context
 
-Who talks to the gateway and what it fronts.
-
 ```mermaid
 flowchart LR
-    client["Clients<br/>(web / mobile / services)"]
+    client["Clients<br/>web · mobile · services"]:::client
+
     subgraph edge["Trust boundary"]
-        gw["API Gateway<br/>(this project)"]
+        gw["API Gateway"]:::gw
     end
-    upA["Upstream A<br/>users-service"]
-    upB["Upstream B<br/>orders-service"]
-    upC["Upstream C<br/>cms"]
-    prom["Prometheus<br/>(scrapes /metrics)"]
-    ops["Operators<br/>(control plane — planned)"]
+
+    upA["users-service"]:::up
+    upB["orders-service"]:::up
+    upC["cms"]:::up
+    prom["Prometheus"]:::obs
+    ops["Operators<br/>(control plane — planned)"]:::planned
 
     client -->|HTTPS| gw
-    gw -->|HTTP /api/users/*| upA
-    gw -->|HTTP /api/orders/*| upB
-    gw -->|HTTP /public/*| upC
+    gw -->|/api/users/*| upA
+    gw -->|/api/orders/*| upB
+    gw -->|/public/*| upC
     prom -.->|GET /metrics| gw
-    ops -.->|Admin API/UI — Phase 3-4| gw
+    ops -.->|Admin API/UI · Phase 3-4| gw
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef up fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef obs fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,color:#374151,stroke-dasharray:5 5;
+    style edge fill:#eff6ff,stroke:#93c5fd,color:#1e3a8a;
 ```
 
-The gateway is the **single ingress**: clients address one host; the gateway
-routes each request to the right upstream by path prefix, applying auth, rate
-limiting, and observability at this one choke point.
+The gateway is the **single ingress**: one host for clients, routing each
+request to the right upstream by path prefix while applying auth, rate limiting,
+and observability at this one choke point.
 
 ---
 
 ## 2. Two-plane architecture
 
-The system separates a **data plane** (serves live traffic) from a **control
-plane** (manages configuration). Today the data plane is built; the control
-plane is planned, with the **registry** already the seam between them.
-
 ```mermaid
 flowchart TB
-    subgraph CP["Control plane — PLANNED (Phases 2-4)"]
-        ui["React Admin UI"] --> api["Admin API (REST)"]
-        api --> store[("SQLite config store")]
+    cfgenv["env / .env<br/>bootstrap config (current source)"]:::store
+    client["client"]:::client
+
+    subgraph CP["Control plane — PLANNED"]
+        direction TB
+        ui["React Admin UI"]:::planned --> api["Admin API (REST)"]:::planned
+        api --> store[("SQLite store")]:::planned
     end
 
     subgraph DP["Data plane — BUILT"]
-        reg["registry<br/>atomic snapshot"]
-        chain["middleware chain"]
-        proxy["reverse proxy"]
-        reg --> chain --> proxy
+        direction TB
+        reg["registry<br/>atomic snapshot"]:::store
+        chain["middleware chain"]:::gw
+        rp["reverse proxy"]:::gw
+        reg --> chain --> rp
     end
 
     store -. "load + hot-reload" .-> reg
-    cfgenv["env / .env<br/>(bootstrap config — current source)"] --> reg
-    client["client"] --> chain
-    proxy --> up["upstreams"]
+    cfgenv --> reg
+    client --> chain
+    rp --> up["upstreams"]:::up
 
-    classDef planned stroke-dasharray:5 5,fill:#f7f7f7;
-    class CP,ui,api,store planned;
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef up fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,color:#374151,stroke-dasharray:5 5;
+    style CP fill:#fafafa,stroke:#d1d5db,color:#374151,stroke-dasharray:5 5;
+    style DP fill:#eff6ff,stroke:#93c5fd,color:#1e3a8a;
 ```
 
-| | Data plane | Control plane |
-|---|---|---|
-| **Status** | Built | Planned |
-| **Job** | Proxy traffic, fast | Manage config |
-| **Reads/writes** | reads `registry.Current()` per request | writes store → triggers reload |
-| **Listener** | public `:8080` | private `:9000` (planned) |
-| **Config source (now)** | env / `.env` → registry | — |
+The **registry** is the seam between planes: the data plane reads it lock-free
+per request; the config source (env now, SQLite later) writes it.
 
 ---
 
 ## 3. Module / package map
 
-Go packages and their dependencies. `cmd/gateway` wires everything; `internal/*`
-holds the logic. Arrows point from a package to what it imports.
+Arrows point from a package to what it imports. Coloured by role.
 
 ```mermaid
 flowchart TD
-    main["cmd/gateway<br/>entrypoint + signals"]
-    server["internal/server<br/>HTTP wiring"]
-    registry["internal/registry<br/>atomic snapshot"]
-    proxy["internal/proxy<br/>match + reverse proxy"]
-    mw["internal/middleware<br/>reqID · recover · log · metrics · auth · ratelimit · realIP"]
-    rl["internal/ratelimit<br/>Limiter + 4 algorithms"]
-    cfg["internal/config<br/>env bootstrap + validation"]
-    model["internal/model<br/>Route · AuthPolicy · RateLimitPolicy"]
+    main["cmd/gateway<br/>entrypoint · signals"]:::entry
+    server["internal/server<br/>HTTP wiring"]:::gw
+    registry["internal/registry<br/>atomic snapshot"]:::store
+    proxy["internal/proxy<br/>match · reverse proxy"]:::gw
+    mw["internal/middleware<br/>reqID · recover · log · metrics<br/>auth · ratelimit · realIP"]:::gw
+    rl["internal/ratelimit<br/>Limiter + 4 algorithms"]:::accent
+    cfg["internal/config<br/>env bootstrap · validation"]:::store
+    model["internal/model<br/>Route · AuthPolicy · RateLimitPolicy"]:::core
 
     main --> cfg
     main --> registry
@@ -118,110 +150,210 @@ flowchart TD
     mw --> model
     rl --> model
     cfg --> model
+
+    classDef entry fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef accent fill:#ffe4e6,stroke:#e11d48,color:#881337;
+    classDef core fill:#fef9c3,stroke:#ca8a04,color:#713f12;
 ```
 
-`model` is the shared vocabulary every layer agrees on. Note the data plane
-(`proxy`) depends only on `model` + `ratelimit` — never on config sources — so
-swapping env for SQLite later touches only `config`/`registry`.
+`model` is the shared vocabulary every layer agrees on. The data plane (`proxy`)
+depends only on `model` + `ratelimit` — never on config sources — so swapping env
+for SQLite later touches only `config`/`registry`.
 
 ---
 
-## 4. Request lifecycle
+## 4. Middleware pipeline
 
-Order is significant: `Resolve` runs first so logging, metrics, rate-limit and
-auth can all read the matched route from context. Unmatched requests still flow
-through (logged + metered); `Dispatch` emits the final 404/405.
+The chain in order. Each stage can short-circuit with a status; otherwise it
+calls the next. `Resolve` runs first so everything downstream can read the
+matched route.
+
+```mermaid
+flowchart LR
+    in(["request"]):::client --> rid["RequestID"]:::gw
+    rid --> rec["Recover"]:::gw
+    rec --> res["Resolve<br/>normalize · match"]:::gw
+    res --> log["Logging"]:::obs
+    log --> met["Metrics"]:::obs
+    met --> rl["RateLimit"]:::gw
+    rl --> auth["Auth"]:::gw
+    auth --> disp["Dispatch"]:::gw
+    disp -->|matched| up(["upstream"]):::up
+    disp -->|no match| nf["404 / 405"]:::err
+
+    rec -. panic .-> e500["500"]:::err
+    rl -. over limit .-> e429["429"]:::err
+    auth -. invalid .-> e401["401"]:::err
+    disp -. upstream error .-> e502["502"]:::err
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef obs fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef up fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef err fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+```
+
+Operational endpoints bypass the chain entirely: `GET /healthz` and
+`GET /metrics`.
+
+---
+
+## 5. Request lifecycle (sequence)
 
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgb(220,252,231) Client
     participant C as Client
+    end
+    box rgb(219,234,254) Gateway middleware
     participant RID as RequestID
-    participant Rec as Recover
-    participant Res as Resolve (proxy)
-    participant Log as Logging
-    participant Met as Metrics
+    participant Res as Resolve
     participant RL as RateLimit
     participant Auth as Auth
-    participant D as Dispatch (proxy)
+    participant D as Dispatch
+    end
+    box rgb(254,243,199) Upstream
     participant U as Upstream
+    end
 
     C->>RID: HTTP request
-    RID->>Rec: + X-Request-ID (ctx + header)
-    Rec->>Res: (defer recover → 500)
-    Note over Res: normalize path (collapse ./..)<br/>match snapshot → Entry in ctx (or nil + allowed methods)
-    Res->>Log: 
-    Log->>Met: 
-    Note over Met: inflight++ / counter / latency
-    Met->>RL: 
+    RID->>Res: + X-Request-ID
+    Note over Res: normalize path (collapse ./..)<br/>match snapshot → Entry (or nil + Allow)
+    Res->>RL: (also: Logging, Metrics)
     Note over RL: key = RealIP.From(r)<br/>limiter.Allow()? else 429
     RL->>Auth: 
-    Note over Auth: if route.RequireAuth:<br/>JWT (alg-allowlisted) or API key, else 401
+    Note over Auth: if RequireAuth:<br/>JWT (alg-allowlisted) or API key, else 401
     Auth->>D: 
     alt route matched
-        D->>U: reverse proxy (strip prefix, X-Forwarded-*)
-        U-->>D: response (or error → 502)
+        D->>U: reverse proxy (strip prefix · X-Forwarded-*)
+        U-->>D: response (or error/timeout → 502)
         D-->>C: stream response
     else no match
         D-->>C: 404 (or 405 + Allow)
     end
 ```
 
-**RealIP** (used by Logging + RateLimit) resolves the client IP, trusting
-`X-Forwarded-For` only from configured trusted proxies — otherwise `RemoteAddr`.
+---
 
-Operational endpoints bypass this chain entirely:
+## 6. Authentication decision
 
+Only routes with `RequireAuth` are gated. A request passes if **any** accepted
+credential validates.
+
+```mermaid
+flowchart TD
+    start(["request on protected route"]):::client --> req{"RequireAuth?"}
+    req -- no --> pass["pass through"]:::ok
+    req -- yes --> akcheck{"route accepts<br/>api_key?"}
+    akcheck -- yes --> ak{"X-API-Key valid?"}
+    ak -- yes --> pass
+    ak -- no --> jwtcheck
+    akcheck -- no --> jwtcheck{"route accepts jwt?"}
+    jwtcheck -- yes --> scheme{"Bearer scheme?<br/>(case-insensitive)"}
+    scheme -- yes --> alg{"alg in HS256/384/512?<br/>(allow-list)"}
+    alg -- yes --> sig{"signature & exp valid?"}
+    sig -- yes --> pass
+    alg -- "no (none / RS256)" --> deny["401"]:::err
+    sig -- no --> deny
+    scheme -- no --> deny
+    jwtcheck -- no --> deny
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef ok fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef err fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
 ```
-GET /healthz  → 200 {"status":"ok"}
-GET /metrics  → Prometheus exposition
+
+The `alg` allow-list is what defeats `alg=none` and RS→HS confusion attacks.
+
+---
+
+## 7. Client-IP resolution (trusted proxy)
+
+`RealIP` decides the identity used for rate limiting and logging. The secure
+default ignores `X-Forwarded-For`, so a client can't spoof it to evade limits.
+
+```mermaid
+flowchart TD
+    r(["request"]):::client --> peer{"peer (RemoteAddr) in<br/>GATEWAY_TRUSTED_PROXIES?"}
+    peer -- "no (default)" --> remote["use RemoteAddr<br/>(XFF ignored)"]:::gw
+    peer -- yes --> xff{"X-Forwarded-For present?"}
+    xff -- yes --> first["use left-most XFF IP<br/>(original client)"]:::gw
+    xff -- no --> remote
+
+    remote --> key["rate-limit key + log 'remote'"]:::store
+    first --> key
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
 ```
 
 ---
 
-## 5. Configuration & hot-reload
+## 8. Configuration & hot-reload
 
-The **registry** holds the live config as an immutable snapshot in an
+The registry holds the live config as an immutable snapshot in an
 `atomic.Pointer`. Reads are lock-free; updates build a new snapshot and swap it
-atomically — the basis for zero-restart hot-reload.
+atomically.
 
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgb(237,233,254) Config + registry
     participant Src as Config source<br/>(env now · SQLite later)
     participant Reg as registry
-    participant Snap as proxy.NewSnapshot
     participant Cur as Active snapshot (atomic)
-    participant DP as Data plane (per request)
+    end
+    box rgb(219,234,254) Data plane
+    participant DP as per request
+    end
 
     Src->>Reg: Load(routes)
-    Reg->>Snap: compile routes → proxies + limiters
+    Reg->>Reg: compile → proxies + limiters
     alt invalid route
-        Snap-->>Reg: error
-        Note over Reg: keep current snapshot (no half-apply)
+        Reg-->>Src: error (keep current — no half-apply)
     else valid
-        Snap-->>Reg: new *Snapshot
         Reg->>Cur: Swap(new)
         Reg->>Reg: old.Close() (stop old limiters)
     end
-    DP->>Cur: Current() (lock-free read)
-    Cur-->>DP: active *Snapshot
+    DP->>Cur: Current() — lock-free read
+    Cur-->>DP: active snapshot
 ```
-
-Configuration today is **bootstrap env vars** (loaded from `.env` if present):
-listen addr, secrets, routes JSON, rate-limit defaults, trusted proxies, and
-upstream timeouts. In Phase 2 the same `Load` path is driven by the SQLite store.
 
 ---
 
-## 6. Rate-limiting design
+## 9. Snapshot lifecycle
 
-A pluggable `Limiter` interface with four algorithms, selected per route. A
-shared `keyed` wrapper owns per-key (per-client-IP) state and idle eviction, so
-each algorithm only implements `allow()`.
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Empty: registry.New()
+    Empty --> Active: Load(valid)
+    Active --> Active: Current() (reads)
+    Active --> Building: Load(new)
+    Building --> Active: valid → swap + Close(old)
+    Building --> Active: invalid → keep Active
+    Active --> [*]: shutdown
+```
+
+A reload is all-or-nothing: the new snapshot is built and validated fully before
+the atomic swap, so a bad edit never half-applies and in-flight requests finish
+on the snapshot they started with.
+
+---
+
+## 10. Rate-limiting design
+
+A pluggable `Limiter` with four algorithms, chosen per route. A shared `keyed`
+wrapper owns per-client-IP state and idle eviction; each algorithm only
+implements `allow()`.
 
 ```mermaid
 classDiagram
+    direction LR
     class Limiter {
         <<interface>>
         +Allow(key string) bool
@@ -243,11 +375,24 @@ classDiagram
     class slidingWindow
 
     Limiter <|.. keyed
-    keyed o-- bucket : per key
+    keyed o-- bucket : one per key
     bucket <|.. tokenBucket
     bucket <|.. leakyBucket
     bucket <|.. fixedWindow
     bucket <|.. slidingWindow
+```
+
+```mermaid
+flowchart LR
+    tb["token_bucket<br/>steady refill + burst"]:::a
+    lb["leaky_bucket<br/>constant drain"]:::b
+    fw["fixed_window<br/>count per window"]:::c
+    sw["sliding_window<br/>rolling weighted"]:::d
+
+    classDef a fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef b fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef c fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef d fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
 ```
 
 | Algorithm | Behavior | Params |
@@ -259,88 +404,98 @@ classDiagram
 
 ---
 
-## 7. Outcomes & status codes
+## 11. Outcomes & status codes
 
 ```mermaid
 flowchart TD
-    req["request"] --> norm["normalize path"]
+    req(["request"]):::client --> norm["normalize path"]:::gw
     norm --> match{"route match?"}
-    match -- "no, prefix matches<br/>but method not allowed" --> c405["405 + Allow"]
-    match -- "no match" --> c404["404"]
-    match -- "yes" --> rl{"within rate limit?"}
-    rl -- no --> c429["429"]
-    rl -- yes --> auth{"auth ok?<br/>(if required)"}
-    auth -- no --> c401["401"]
+    match -- "prefix ok,<br/>method not allowed" --> c405["405 + Allow"]:::err
+    match -- "no match" --> c404["404"]:::err
+    match -- yes --> rl{"within rate limit?"}
+    rl -- no --> c429["429"]:::err
+    rl -- yes --> auth{"auth ok?"}
+    auth -- no --> c401["401"]:::err
     auth -- yes --> up{"upstream ok?"}
-    up -- "error / timeout" --> c502["502"]
-    up -- panic --> c500["500 (recovered)"]
-    up -- ok --> c200["2xx (streamed)"]
-```
+    up -- "error / timeout" --> c502["502"]:::err
+    up -- panic --> c500["500 (recovered)"]:::err
+    up -- ok --> c200["2xx (streamed)"]:::ok
 
-| Code | When |
-|------|------|
-| 2xx | proxied upstream response |
-| 401 | auth required, missing/invalid credential |
-| 404 | no route matches the path |
-| 405 | path matches but method not allowed (`Allow` header set) |
-| 429 | rate limit exceeded |
-| 500 | handler panic (recovered; process survives) |
-| 502 | upstream unreachable / timed out |
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef ok fill:#bbf7d0,stroke:#16a34a,color:#14532d;
+    classDef err fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+```
 
 ---
 
-## 8. Deployment view
-
-Single static Go binary; SQLite + admin UI arrive with the control plane.
+## 12. Deployment view
 
 ```mermaid
 flowchart TB
+    lb["L4/L7 load balancer<br/>sets X-Forwarded-For"]:::client
     subgraph host["Container / host"]
-        bin["gateway binary<br/>(CGO_ENABLED=0 static)"]
-        envf[".env / env vars<br/>+ secrets"]
-        db[("SQLite file<br/>on a volume — Phase 2")]
+        bin["gateway binary<br/>CGO_ENABLED=0 static"]:::gw
+        envf[".env / env vars + secrets"]:::store
+        db[("SQLite file on a volume<br/>— Phase 2")]:::planned
         envf --> bin
         db -.-> bin
     end
-    lb["L4/L7 load balancer<br/>(sets X-Forwarded-For)"] --> bin
-    bin --> upstreams["upstream services"]
-    prom["Prometheus"] -.->|/metrics| bin
+    prom["Prometheus"]:::obs
 
-    classDef planned stroke-dasharray:5 5,fill:#f7f7f7;
-    class db planned;
+    lb --> bin
+    bin --> upstreams["upstream services"]:::up
+    prom -.->|/metrics| bin
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef up fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef obs fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,color:#374151,stroke-dasharray:5 5;
+    style host fill:#f8fafc,stroke:#cbd5e1,color:#334155;
 ```
 
 - **Artifact:** one static binary (pure-Go SQLite keeps `CGO_ENABLED=0`).
-- **Behind an LB?** set `GATEWAY_TRUSTED_PROXIES` to the LB network so
-  `X-Forwarded-For` is trusted for client-IP resolution; otherwise XFF is ignored.
+- **Behind an LB?** set `GATEWAY_TRUSTED_PROXIES` to the LB network so XFF is
+  trusted; otherwise XFF is ignored and every client looks like the LB.
 - **Scaling:** stateless data plane scales horizontally; rate-limit state and
   (Phase 2) SQLite config are per-node until the shared-store roadmap item.
 
 ---
 
-## 9. Current vs planned
+## 13. Current vs planned
 
 ```mermaid
 flowchart LR
     subgraph done["Built"]
-        p1["Phase 1 — data plane<br/>routing · auth · rate-limit · observability"]
-        sec["Security hardening<br/>XFF trust · path norm · timeouts · 405 · uniqueness"]
+        direction TB
+        p1["Phase 1 — data plane"]:::ok
+        sec["Security hardening"]:::ok
+        p1 --> sec
     end
     subgraph next["Planned"]
-        p2["Phase 2 — SQLite store + hot-reload"]
-        p3["Phase 3 — Admin API + consumers/plans"]
-        p4["Phase 4 — React Admin UI"]
+        direction TB
+        p2["Phase 2 — SQLite + hot-reload"]:::planned
+        p3["Phase 3 — Admin API + consumers/plans"]:::planned
+        p4["Phase 4 — React Admin UI"]:::planned
+        p2 --> p3 --> p4
     end
-    p1 --> sec --> p2 --> p3 --> p4
+    sec --> p2
+
+    classDef ok fill:#bbf7d0,stroke:#16a34a,color:#14532d;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,color:#374151,stroke-dasharray:5 5;
+    style done fill:#f0fdf4,stroke:#86efac,color:#14532d;
+    style next fill:#fafafa,stroke:#d1d5db,color:#374151;
 ```
 
 | Area | Status |
 |------|--------|
-| Reverse-proxy routing (longest-prefix, strip, methods) | ✅ Built |
+| Reverse-proxy routing (longest-prefix · strip · methods) | ✅ Built |
 | Auth — JWT (HS256/384/512, alg-allowlisted) + API keys | ✅ Built |
 | Rate limiting — 4 algorithms, per route | ✅ Built |
-| Observability — slog logs, Prometheus, request IDs | ✅ Built |
-| Trusted-proxy XFF, path normalization, upstream timeouts | ✅ Built |
+| Observability — slog logs · Prometheus · request IDs | ✅ Built |
+| Trusted-proxy XFF · path normalization · upstream timeouts | ✅ Built |
 | SQLite config store + hot-reload | ⏳ Phase 2 |
 | Admin REST API + consumers/plans | ⏳ Phase 3 |
 | React admin UI | ⏳ Phase 4 |
