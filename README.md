@@ -3,10 +3,11 @@
 A self-hostable API Gateway in Go. It fronts your backend services with
 path-prefix routing, authentication, rate limiting, and observability.
 
-See [`docs/technical-design.md`](docs/technical-design.md) for the full design
-(including the planned control plane: SQLite store, REST admin API, and React UI)
-and [`docs/concepts-and-auth-decisions.md`](docs/concepts-and-auth-decisions.md)
-for a plain-language guide to the concepts and auth decisions.
+Documentation:
+- [`docs/architecture.md`](docs/architecture.md) — application architecture with diagrams.
+- [`docs/technical-design.md`](docs/technical-design.md) — full design (incl. the planned control plane: SQLite store, REST admin API, React UI).
+- [`docs/concepts-and-auth-decisions.md`](docs/concepts-and-auth-decisions.md) — plain-language guide to the concepts and auth decisions.
+- [`docs/test-findings.md`](docs/test-findings.md) — adversarial edge-case test results.
 
 > **Status — Phase 1 (data plane).** Reverse-proxy routing, JWT/API-key auth,
 > per-route rate limiting, and observability are implemented. The config store,
