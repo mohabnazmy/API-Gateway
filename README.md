@@ -15,14 +15,19 @@ for a plain-language guide to the concepts and auth decisions.
 
 ## Quick start
 
-The fastest way to start is from the example env file:
+The fastest way to start is from the example env file. The gateway
+**auto-loads `.env`** from the working directory on startup — no sourcing
+needed:
 
 ```bash
 go build -o gateway ./cmd/gateway
 cp .env.example .env          # then edit secrets/routes
-set -a; source .env; set +a   # load into the shell
-./gateway
+./gateway                     # .env is loaded automatically
 ```
+
+Point it at a different file with `GATEWAY_ENV_FILE=/path/to/file`. Real
+environment variables always take precedence over the file, and a missing
+`.env` is fine (values fall back to defaults / direct env vars).
 
 Or configure inline:
 
