@@ -1,6 +1,6 @@
 # API Gateway — Technical Design
 
-**Status:** Draft · **Owner:** mohabnazmy · **Last updated:** 2026-06-18 · **Language:** Go + React
+**Status:** Draft · **Owner:** mohabnazmy · **Last updated:** 2026-06-19 · **Language:** Go + React
 
 ---
 
@@ -106,6 +106,7 @@ swaps** whenever config changes (see [§11 Hot-Reload](#11-control-plane--hot-re
 | C4 | Authenticate the Admin API/UI; never expose it on the public proxy port. |
 | C5 | Manage API keys (create / list / revoke); store key **hashes**, never plaintext. |
 | C6 | Serve a React admin UI for all of the above. |
+| C7 | Model **consumers** (customers) and **plans** (tiers); each API key belongs to a consumer, and rate limits/quotas derive from the consumer's plan. |
 
 ### Non-functional
 
@@ -221,7 +222,10 @@ if it satisfies the policy's accepted methods:
 
 - **API key** — `X-API-Key` matched against the store. Keys are stored as
   **hashes** (e.g. SHA-256); lookup hashes the presented key and compares. Keys
-  are created/revoked via the Admin API/UI (C5).
+  are created/revoked via the Admin API/UI (C5). Each key **belongs to a
+  consumer** (see [§8a](#8a-consumers--plans)), so a successful API-key auth
+  resolves *which customer* is calling and puts that identity in the request
+  context for downstream rate limiting and usage attribution.
 - **JWT** — `Authorization: Bearer <token>`. Algorithm is **explicitly
   allow-listed** to defend against `alg: none` and RS→HS confusion attacks.
   - **HS256/384/512** (symmetric): secret injected via env, *referenced* from the
@@ -237,6 +241,41 @@ rationale.
 
 ---
 
+## 8a. Consumers & Plans
+
+A production gateway serves many **customers**, each with their own credentials
+and their own traffic allowance. The gateway models this with two entities:
+
+- **Consumer** — a customer or application that calls the API. Owns **one or more
+  API keys** (so keys can be rotated or scoped per environment without downtime)
+  and is assigned a **plan**.
+- **Plan** — a named tier (`free`, `pro`, `enterprise`, …) that sets the
+  consumer's rate limit and quota *by volume*.
+
+```
+  API key  ─owned by─►  Consumer  ─assigned─►  Plan (rps / burst / daily quota)
+```
+
+**Identity flow:** on API-key auth the gateway resolves the key → its consumer →
+the consumer's plan, and stores the consumer in the request context. Rate
+limiting and usage metrics then key on the **consumer**, not the client IP, so
+each customer gets their own bucket sized to their tier:
+
+```
+key "abc123"  → consumer "acme-corp"     → plan "enterprise" (5000 rps)
+key "def456"  → consumer "small-startup" → plan "free"       (60 rps)
+```
+
+**Scope (decision):** consumers/plans are modeled for **API keys** in this
+iteration. **JWT-based** consumer identity (deriving the consumer from a token
+claim, or selecting a per-customer key by `kid`/JWKS) is deferred to the roadmap;
+until then JWT auth uses the shared trusted secret and is not consumer-attributed.
+
+Consumers, plans, and a consumer's keys are managed through the Admin API/UI
+([§13](#13-control-plane--admin-api)).
+
+---
+
 ## 9. Rate Limiting
 
 A **`Limiter` interface** with the **algorithm chosen per route** (F6):
@@ -248,12 +287,16 @@ A **`Limiter` interface** with the **algorithm chosen per route** (F6):
 | `sliding_window` | N requests over a rolling window. | Smoother than fixed; avoids edge bursts. |
 | `leaky_bucket` | Constant drain rate. | Strict shaping. |
 
-- Keyed per **client IP** by default; key-by-API-key / JWT-subject is a roadmap item.
+- **Keying:** when a request is attributed to a **consumer** (via API key, see
+  [§8a](#8a-consumers--plans)), the limiter keys on the **consumer** and uses that
+  consumer's **plan** limits — so each customer is throttled to their own tier.
+  Otherwise (anonymous or JWT-only routes) it falls back to the route's limit
+  keyed by **client IP**.
 - Client IP from `X-Forwarded-For` (first hop) when present, else `RemoteAddr`.
   **Assumes the gateway is the edge or behind a trusted proxy** (XFF spoofing is
   the trade-off; a trusted-CIDR allow-list is an open question).
-- Per-IP limiter state evicted when idle to bound memory (N4).
-- Over-limit → **`429`**.
+- Limiter state evicted when idle to bound memory (N4).
+- Over-limit → **`429`**. (Daily quotas, where a plan sets one, also → `429`.)
 
 **Limitation:** state is per-instance; N replicas ≈ N× the global limit.
 Distributed limiting (Redis) is a roadmap item.
@@ -311,10 +354,29 @@ CREATE TABLE rate_limit_policies (
   window_sec    INTEGER
 );
 
+CREATE TABLE plans (                       -- a named tier sizing limits to volume
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,       -- "free" | "pro" | "enterprise" | …
+  rps           REAL NOT NULL,
+  burst         INTEGER NOT NULL,
+  daily_quota   INTEGER,                    -- nullable = unmetered
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE consumers (                    -- a customer / app that calls the API
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  plan_id       INTEGER REFERENCES plans(id),
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE api_keys (
   id            INTEGER PRIMARY KEY,
-  name          TEXT NOT NULL,
-  key_hash      TEXT NOT NULL UNIQUE,       -- SHA-256 of the key; plaintext never stored
+  consumer_id   INTEGER NOT NULL REFERENCES consumers(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,             -- label, e.g. "prod", "ci" (a consumer may hold several)
+  key_hash      TEXT NOT NULL UNIQUE,      -- SHA-256 of the key; plaintext never stored
   enabled       INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
   revoked_at    TEXT
@@ -386,8 +448,12 @@ REST/JSON under `/admin/api`, served on the **private admin listener** only.
 | `GET /admin/api/routes/{id}` | Fetch one route. |
 | `PUT /admin/api/routes/{id}` | Update a route/policies. |
 | `DELETE /admin/api/routes/{id}` | Delete a route. |
-| `GET /admin/api/api-keys` | List keys (metadata only — never the secret). |
-| `POST /admin/api/api-keys` | Create a key → returns plaintext **once**; stores only the hash. |
+| `GET / POST /admin/api/plans` | List / create plans (tier limits & quota). |
+| `PUT / DELETE /admin/api/plans/{id}` | Update / delete a plan. |
+| `GET / POST /admin/api/consumers` | List / create consumers (assign a plan). |
+| `GET / PUT / DELETE /admin/api/consumers/{id}` | Fetch / update / delete a consumer. |
+| `GET /admin/api/consumers/{id}/api-keys` | List a consumer's keys (metadata only). |
+| `POST /admin/api/consumers/{id}/api-keys` | Issue a key for the consumer → returns plaintext **once**; stores only the hash. |
 | `DELETE /admin/api/api-keys/{id}` | Revoke a key. |
 | `POST /admin/api/auth/login` | Admin login → stateless JWT session token. |
 | `GET /admin/api/health` | Control-plane health. |
@@ -496,7 +562,7 @@ Each phase is independently shippable and testable.
 2. **Phase 2 — Store + registry.** SQLite schema/migrations; load config into an
    immutable snapshot; `registry.Current()` lock-free reads; hot-reload swap.
 3. **Phase 3 — Admin API.** REST CRUD over the store with validation, admin
-   login/sessions, API-key management; trigger hot-reload on writes.
+   login/sessions, consumer/plan + API-key management; trigger hot-reload on writes.
 4. **Phase 4 — Admin UI.** React app for routes/policies/keys/dashboard, embedded
    and served from the admin listener.
 
@@ -507,7 +573,8 @@ Each phase is independently shippable and testable.
 1. **Multi-node shared config** — Postgres/etcd backend + version-poll reload.
 2. **Distributed rate limiting** (Redis) for correct multi-replica limits.
 3. **Authorization** — per-route role/scope gates, then fine-grained policy (OPA/Cedar).
-4. **Key-aware limits** — rate-limit by API key / JWT subject, not just IP.
+4. **Per-consumer JWT identity** — derive the consumer from a token claim, or
+   select a per-customer key by `kid`/JWKS (API-key consumers ship first; see §8a).
 5. **Upstream load balancing + active health checks** (multiple targets/route).
 6. **Admin RBAC + audit log** of all config changes.
 7. **Distributed tracing** — OpenTelemetry spans propagated to upstreams.
