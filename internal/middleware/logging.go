@@ -7,7 +7,7 @@ import (
 )
 
 // Logging emits a structured log line per request once it completes.
-func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
+func Logging(logger *slog.Logger, ip *RealIP) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -25,7 +25,7 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 				"status", rec.status,
 				"bytes", rec.bytes,
 				"duration_ms", time.Since(start).Milliseconds(),
-				"remote", clientIP(r),
+				"remote", ip.From(r),
 			)
 		})
 	}

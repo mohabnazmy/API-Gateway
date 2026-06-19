@@ -15,13 +15,18 @@ import (
 type Registry struct {
 	current atomic.Pointer[proxy.Snapshot]
 	logger  *slog.Logger
+	opts    proxy.Options
 }
 
 // New returns a Registry seeded with an empty snapshot, so Current() is always
-// safe to call before the first Load.
-func New(logger *slog.Logger) *Registry {
+// safe to call before the first Load. Optional proxy Options (e.g. the upstream
+// transport) apply to every snapshot it builds.
+func New(logger *slog.Logger, opts ...proxy.Options) *Registry {
 	r := &Registry{logger: logger}
-	empty, _ := proxy.NewSnapshot(nil, logger)
+	if len(opts) > 0 {
+		r.opts = opts[0]
+	}
+	empty, _ := proxy.NewSnapshot(nil, logger, r.opts)
 	r.current.Store(empty)
 	return r
 }
@@ -35,7 +40,7 @@ func (r *Registry) Current() *proxy.Snapshot {
 // compilation fails, the active snapshot is left untouched (N5: no half-apply).
 // The previous snapshot's limiters are stopped after the swap.
 func (r *Registry) Load(routes []model.Route) error {
-	next, err := proxy.NewSnapshot(routes, r.logger)
+	next, err := proxy.NewSnapshot(routes, r.logger, r.opts)
 	if err != nil {
 		return err
 	}

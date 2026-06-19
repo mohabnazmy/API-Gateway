@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -50,6 +51,14 @@ type Config struct {
 	JWTSecret string
 	APIKeys   map[string]struct{}
 
+	// TrustedProxies are networks whose X-Forwarded-For header is trusted for
+	// client-IP resolution. Empty means trust none (XFF ignored).
+	TrustedProxies []*net.IPNet
+
+	// Upstream transport timeouts.
+	UpstreamDialTimeout     time.Duration
+	UpstreamResponseTimeout time.Duration
+
 	LogLevel    string
 	MetricsPath string
 }
@@ -67,8 +76,17 @@ func Load() (*Config, error) {
 		JWTSecret:       getString("GATEWAY_JWT_SECRET", ""),
 		LogLevel:        getString("GATEWAY_LOG_LEVEL", "info"),
 		MetricsPath:     getString("GATEWAY_METRICS_PATH", "/metrics"),
+
+		UpstreamDialTimeout:     getDuration("GATEWAY_UPSTREAM_DIAL_TIMEOUT", 10*time.Second),
+		UpstreamResponseTimeout: getDuration("GATEWAY_UPSTREAM_RESPONSE_TIMEOUT", 30*time.Second),
 	}
 	c.APIKeys = parseAPIKeys(os.Getenv("GATEWAY_API_KEYS"))
+
+	trusted, err := parseTrustedProxies(os.Getenv("GATEWAY_TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, fmt.Errorf("GATEWAY_TRUSTED_PROXIES: %w", err)
+	}
+	c.TrustedProxies = trusted
 
 	routes, err := parseRoutes(os.Getenv("GATEWAY_ROUTES"))
 	if err != nil {
@@ -93,6 +111,7 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	names := make(map[string]struct{})
 	for i, r := range c.Routes {
 		switch {
 		case r.PathPrefix == "":
@@ -105,8 +124,69 @@ func (c *Config) validate() error {
 		if r.Auth.RequireAuth && c.JWTSecret == "" && len(c.APIKeys) == 0 {
 			return fmt.Errorf("routes[%d] (%q): require_auth is set but no GATEWAY_JWT_SECRET or GATEWAY_API_KEYS configured", i, r.Name)
 		}
+		// W6: route names must be unique (used as metric labels / log fields).
+		if r.Name != "" {
+			if _, dup := names[r.Name]; dup {
+				return fmt.Errorf("routes[%d]: duplicate route name %q", i, r.Name)
+			}
+			names[r.Name] = struct{}{}
+		}
+		// W7: a route must not be shadowed by an earlier one with the same prefix
+		// and overlapping methods, which would make it silently unreachable.
+		for j := 0; j < i; j++ {
+			if c.Routes[j].PathPrefix == r.PathPrefix && methodsOverlap(c.Routes[j].Methods, r.Methods) {
+				return fmt.Errorf("routes[%d] (%q): path_prefix %q with overlapping methods is shadowed by routes[%d] (%q)",
+					i, r.Name, r.PathPrefix, j, c.Routes[j].Name)
+			}
+		}
 	}
 	return nil
+}
+
+// methodsOverlap reports whether two routes could both match a request. An empty
+// method list means "any method", so it overlaps with everything.
+func methodsOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	for _, x := range a {
+		for _, y := range b {
+			if strings.EqualFold(x, y) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseTrustedProxies parses a comma-separated list of CIDRs or bare IPs.
+func parseTrustedProxies(raw string) ([]*net.IPNet, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var nets []*net.IPNet
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !strings.Contains(part, "/") {
+			if ip := net.ParseIP(part); ip != nil {
+				if ip.To4() != nil {
+					part += "/32"
+				} else {
+					part += "/128"
+				}
+			}
+		}
+		_, n, err := net.ParseCIDR(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy %q: %w", part, err)
+		}
+		nets = append(nets, n)
+	}
+	return nets, nil
 }
 
 func parseRoutes(raw string) ([]model.Route, error) {

@@ -63,8 +63,9 @@ func (a *Authenticator) validJWT(r *http.Request) bool {
 		return false
 	}
 	auth := r.Header.Get("Authorization")
-	const prefix = "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
+	// RFC 6750: the auth scheme is case-insensitive ("Bearer" == "bearer").
+	const prefix = "bearer "
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
 		return false
 	}
 	tokenStr := strings.TrimSpace(auth[len(prefix):])
