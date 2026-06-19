@@ -356,18 +356,24 @@ classDiagram
     direction LR
     class Limiter {
         <<interface>>
-        +Allow(key string) bool
+        +Allow(key) bool, Result
         +Stop()
+    }
+    class Result {
+        +Limit int
+        +Remaining int
+        +Reset Duration
+        +RetryAfter Duration
     }
     class keyed {
         -factory
         -visitors
-        +Allow(key) bool
+        +Allow(key) bool, Result
         +Stop()
     }
     class bucket {
         <<interface>>
-        -allow() bool
+        -allow() bool, Result
     }
     class tokenBucket
     class leakyBucket
@@ -375,6 +381,7 @@ classDiagram
     class slidingWindow
 
     Limiter <|.. keyed
+    Limiter ..> Result : returns
     keyed o-- bucket : one per key
     bucket <|.. tokenBucket
     bucket <|.. leakyBucket
@@ -401,6 +408,31 @@ flowchart LR
 | `leaky_bucket` | constant drain, no bursts | `rps`, `burst` |
 | `fixed_window` | count per fixed window | `rps`, `window_sec` |
 | `sliding_window` | rolling weighted window | `rps`, `window_sec` |
+
+### Consumption headers
+
+Each `Allow` returns a `Result` (limit, remaining, reset, retry-after) computed
+from the route's configured limit. The middleware surfaces it so clients can see
+their consumption and when capacity returns.
+
+```mermaid
+flowchart LR
+    req(["request"]):::client --> lim["limiter.Allow(key)<br/>→ (ok, Result)"]:::gw
+    lim -->|ok| pass["proxy + headers:<br/>RateLimit-Limit / -Remaining / -Reset"]:::obs
+    lim -->|denied| rej["429 +<br/>Retry-After · RateLimit-Reset"]:::err
+
+    classDef client fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef gw fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef obs fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef err fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+```
+
+| Header | Meaning |
+|--------|---------|
+| `RateLimit-Limit` (+ `X-RateLimit-Limit`) | configured allowance (burst / per-window limit) |
+| `RateLimit-Remaining` (+ `X-`) | allowance left for this client |
+| `RateLimit-Reset` (+ `X-`) | seconds until the allowance replenishes |
+| `Retry-After` | on `429` only — seconds to wait before retrying |
 
 ---
 
