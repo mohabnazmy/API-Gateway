@@ -1,14 +1,13 @@
 // Package ratelimit provides per-route rate limiting behind a pluggable
-// algorithm interface. Phase 1 ships the token-bucket algorithm; additional
-// algorithms (fixed/sliding window, leaky bucket) slot in behind Limiter.
+// algorithm interface. Four algorithms are available and selected per route via
+// the rate-limit policy's `algorithm` field: token_bucket (default),
+// fixed_window, sliding_window, and leaky_bucket.
 package ratelimit
 
 import (
 	"fmt"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
@@ -22,8 +21,18 @@ type Limiter interface {
 	Stop()
 }
 
+// bucket is one key's algorithm instance. Implementations guard their own state.
+type bucket interface {
+	allow() bool
+}
+
 // New builds a Limiter for the given policy. It returns (nil, nil) when the
 // policy disables limiting, and an error for an unknown algorithm.
+//
+// Parameter mapping:
+//   - token_bucket / leaky_bucket: rps = rate, burst = bucket capacity.
+//   - fixed_window / sliding_window: the per-window limit is rps × window, where
+//     window = window_sec (default 1s). So rps is the sustained rate either way.
 func New(p model.RateLimitPolicy) (Limiter, error) {
 	if !p.Enabled() {
 		return nil, nil
@@ -32,19 +41,35 @@ func New(p model.RateLimitPolicy) (Limiter, error) {
 	if algorithm == "" {
 		algorithm = "token_bucket"
 	}
+
+	window := time.Duration(p.WindowSec) * time.Second
+	if window <= 0 {
+		window = time.Second
+	}
+	windowLimit := int(p.RPS * window.Seconds())
+	if windowLimit < 1 {
+		windowLimit = 1
+	}
+
 	switch algorithm {
 	case "token_bucket":
-		return newTokenBucket(p.RPS, p.Burst), nil
+		return newKeyed(func() bucket { return newTokenBucket(p.RPS, p.Burst) }), nil
+	case "leaky_bucket":
+		return newKeyed(func() bucket { return newLeakyBucket(p.RPS, p.Burst) }), nil
+	case "fixed_window":
+		return newKeyed(func() bucket { return newFixedWindow(windowLimit, window) }), nil
+	case "sliding_window":
+		return newKeyed(func() bucket { return newSlidingWindow(windowLimit, window) }), nil
 	default:
 		return nil, fmt.Errorf("unknown rate-limit algorithm %q", algorithm)
 	}
 }
 
-// tokenBucket maintains an independent token-bucket limiter per key, evicting
-// idle keys to bound memory.
-type tokenBucket struct {
-	rps   rate.Limit
-	burst int
+// keyed maintains an independent algorithm instance per key, evicting idle keys
+// to bound memory. It is shared by every algorithm so the per-key map, idle
+// eviction, and cleanup goroutine live in one place.
+type keyed struct {
+	factory func() bucket
 
 	mu       sync.Mutex
 	visitors map[string]*visitor
@@ -52,54 +77,50 @@ type tokenBucket struct {
 }
 
 type visitor struct {
-	limiter  *rate.Limiter
+	bucket   bucket
 	lastSeen time.Time
 }
 
-func newTokenBucket(rps float64, burst int) *tokenBucket {
-	if burst < 1 {
-		burst = 1
-	}
-	tb := &tokenBucket{
-		rps:      rate.Limit(rps),
-		burst:    burst,
+func newKeyed(factory func() bucket) *keyed {
+	k := &keyed{
+		factory:  factory,
 		visitors: make(map[string]*visitor),
 		done:     make(chan struct{}),
 	}
-	go tb.cleanupLoop()
-	return tb
+	go k.cleanupLoop()
+	return k
 }
 
-func (tb *tokenBucket) Allow(key string) bool {
-	tb.mu.Lock()
-	v, ok := tb.visitors[key]
+func (k *keyed) Allow(key string) bool {
+	k.mu.Lock()
+	v, ok := k.visitors[key]
 	if !ok {
-		v = &visitor{limiter: rate.NewLimiter(tb.rps, tb.burst)}
-		tb.visitors[key] = v
+		v = &visitor{bucket: k.factory()}
+		k.visitors[key] = v
 	}
 	v.lastSeen = time.Now()
-	limiter := v.limiter
-	tb.mu.Unlock()
-	return limiter.Allow()
+	b := v.bucket
+	k.mu.Unlock()
+	return b.allow()
 }
 
-func (tb *tokenBucket) Stop() { close(tb.done) }
+func (k *keyed) Stop() { close(k.done) }
 
-func (tb *tokenBucket) cleanupLoop() {
+func (k *keyed) cleanupLoop() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-tb.done:
+		case <-k.done:
 			return
 		case <-ticker.C:
-			tb.mu.Lock()
-			for key, v := range tb.visitors {
+			k.mu.Lock()
+			for key, v := range k.visitors {
 				if time.Since(v.lastSeen) > 3*time.Minute {
-					delete(tb.visitors, key)
+					delete(k.visitors, key)
 				}
 			}
-			tb.mu.Unlock()
+			k.mu.Unlock()
 		}
 	}
 }
