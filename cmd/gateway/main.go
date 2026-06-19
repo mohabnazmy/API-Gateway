@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/mohabnazmy/API-Gateway/internal/config"
+	"github.com/mohabnazmy/API-Gateway/internal/proxy"
 	"github.com/mohabnazmy/API-Gateway/internal/registry"
 	"github.com/mohabnazmy/API-Gateway/internal/server"
 )
@@ -34,8 +35,11 @@ func main() {
 
 	// The registry holds the live config snapshot the data plane reads. In Phase
 	// 1 it is loaded once from the bootstrap config; later phases reload it from
-	// the config store on change.
-	reg := registry.New(logger)
+	// the config store on change. The upstream transport (with timeouts) applies
+	// to every route's reverse proxy.
+	reg := registry.New(logger, proxy.Options{
+		Transport: proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
+	})
 	if err := reg.Load(cfg.Routes); err != nil {
 		logger.Error("failed to load routes", "error", err)
 		os.Exit(1)

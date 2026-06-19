@@ -25,6 +25,7 @@ func New(cfg *config.Config, reg *registry.Registry, logger *slog.Logger) *http.
 	promReg.MustRegister(prometheus.NewGoCollector())
 	metrics := middleware.NewMetrics(promReg)
 	auth := middleware.NewAuthenticator(cfg.JWTSecret, cfg.APIKeys)
+	realIP := middleware.NewRealIP(cfg.TrustedProxies)
 
 	r := chi.NewRouter()
 
@@ -39,9 +40,9 @@ func New(cfg *config.Config, reg *registry.Registry, logger *slog.Logger) *http.
 		r.Use(middleware.RequestID)
 		r.Use(middleware.Recover(logger))
 		r.Use(proxy.Resolve(reg))
-		r.Use(middleware.Logging(logger))
+		r.Use(middleware.Logging(logger, realIP))
 		r.Use(metrics.Middleware)
-		r.Use(middleware.RateLimit)
+		r.Use(middleware.RateLimit(realIP))
 		r.Use(auth.Middleware)
 		r.Handle("/*", http.HandlerFunc(proxy.Dispatch))
 	})

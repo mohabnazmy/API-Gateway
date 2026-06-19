@@ -8,11 +8,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	stdpath "path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 	"github.com/mohabnazmy/API-Gateway/internal/ratelimit"
@@ -20,7 +23,35 @@ import (
 
 type ctxKey int
 
-const entryCtxKey ctxKey = iota
+const (
+	entryCtxKey ctxKey = iota
+	allowedMethodsCtxKey
+)
+
+// Options configures how snapshots build their reverse proxies.
+type Options struct {
+	// Transport is used by every route's reverse proxy. When nil, a default
+	// transport with sane dial/response timeouts is used.
+	Transport http.RoundTripper
+}
+
+// NewTransport builds an upstream transport with the given dial and
+// response-header timeouts, so a slow or hung upstream can't tie up the gateway.
+func NewTransport(dialTimeout, responseHeaderTimeout time.Duration) *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}
+}
+
+// defaultTransport is used when Options.Transport is nil (e.g. in tests).
+var defaultTransport = NewTransport(10*time.Second, 30*time.Second)
 
 // Entry is one compiled route: its config plus the reverse proxy and limiter
 // built from it.
@@ -51,10 +82,19 @@ type SnapshotSource interface {
 // NewSnapshot compiles routes into a Snapshot, building one reverse proxy and
 // limiter per route. It returns an error if any route is invalid; on error, any
 // limiters already created are stopped so nothing leaks.
-func NewSnapshot(routes []model.Route, logger *slog.Logger) (*Snapshot, error) {
+func NewSnapshot(routes []model.Route, logger *slog.Logger, opts ...Options) (*Snapshot, error) {
+	var o Options
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	transport := o.Transport
+	if transport == nil {
+		transport = defaultTransport
+	}
+
 	s := &Snapshot{}
 	for _, r := range routes {
-		entry, err := compile(r, logger)
+		entry, err := compile(r, logger, transport)
 		if err != nil {
 			s.Close() // stop limiters created so far
 			return nil, err
@@ -67,7 +107,7 @@ func NewSnapshot(routes []model.Route, logger *slog.Logger) (*Snapshot, error) {
 	return s, nil
 }
 
-func compile(r model.Route, logger *slog.Logger) (*Entry, error) {
+func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper) (*Entry, error) {
 	target, err := url.Parse(r.Upstream)
 	if err != nil {
 		return nil, fmt.Errorf("route %q: invalid upstream %q: %w", r.Name, r.Upstream, err)
@@ -81,7 +121,7 @@ func compile(r model.Route, logger *slog.Logger) (*Entry, error) {
 	}
 	return &Entry{
 		route:   r,
-		proxy:   newReverseProxy(target, r, logger),
+		proxy:   newReverseProxy(target, r, logger, transport),
 		limiter: limiter,
 	}, nil
 }
@@ -118,31 +158,72 @@ func (s *Snapshot) Match(r *http.Request) (*Entry, bool) {
 	return nil, false
 }
 
-// Resolve is middleware that matches each request against the current snapshot
-// and stores the matched entry (or nil) in the context. It never short-circuits,
-// so logging and metrics observe unmatched requests too; Dispatch emits the 404.
+// allowedMethods returns the union of methods accepted by routes whose prefix
+// matches the path. It is only meaningful when Match found no entry: a
+// prefix-matching route with no method restriction would have matched any
+// method, so a non-empty result here means every matching route restricts
+// methods and the request's method is in none of them (→ 405).
+func (s *Snapshot) allowedMethods(path string) []string {
+	set := make(map[string]struct{})
+	for _, e := range s.entries {
+		if !pathMatches(path, e.route.PathPrefix) || len(e.route.Methods) == 0 {
+			continue
+		}
+		for _, m := range e.route.Methods {
+			set[strings.ToUpper(m)] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for m := range set {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Resolve is middleware that normalizes the path, matches the request against
+// the current snapshot, and stores the matched entry (or nil) in the context. It
+// never short-circuits, so logging and metrics observe unmatched requests too;
+// Dispatch emits the final 404/405.
 func Resolve(src SnapshotSource) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var matched *Entry
-			if e, ok := src.Current().Match(r); ok {
-				matched = e
+			// W2: collapse "." / ".." segments so matching and forwarding act on
+			// a canonical path (prevents traversal under a route's prefix).
+			if cleaned := cleanPath(r.URL.Path); cleaned != r.URL.Path {
+				r.URL.Path = cleaned
+				r.URL.RawPath = ""
 			}
-			ctx := context.WithValue(r.Context(), entryCtxKey, matched)
+
+			snap := src.Current()
+			ctx := r.Context()
+			if e, ok := snap.Match(r); ok {
+				ctx = context.WithValue(ctx, entryCtxKey, e)
+			} else {
+				ctx = context.WithValue(ctx, entryCtxKey, (*Entry)(nil))
+				if methods := snap.allowedMethods(r.URL.Path); len(methods) > 0 {
+					ctx = context.WithValue(ctx, allowedMethodsCtxKey, methods)
+				}
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// Dispatch is the terminal handler: it proxies to the matched upstream, or
-// returns 404 when nothing matched.
+// Dispatch is the terminal handler: it proxies to the matched upstream, returns
+// 405 (with an Allow header) when the path matched but the method didn't, or 404
+// when nothing matched.
 func Dispatch(w http.ResponseWriter, r *http.Request) {
-	e, _ := r.Context().Value(entryCtxKey).(*Entry)
-	if e == nil {
-		http.Error(w, "no route configured for this path", http.StatusNotFound)
+	if e, _ := r.Context().Value(entryCtxKey).(*Entry); e != nil {
+		e.proxy.ServeHTTP(w, r)
 		return
 	}
-	e.proxy.ServeHTTP(w, r)
+	if methods, ok := r.Context().Value(allowedMethodsCtxKey).([]string); ok && len(methods) > 0 {
+		w.Header().Set("Allow", strings.Join(methods, ", "))
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	http.Error(w, "no route configured for this path", http.StatusNotFound)
 }
 
 // EntryFromContext returns the entry matched by Resolve, if any.
@@ -154,8 +235,9 @@ func EntryFromContext(ctx context.Context) (*Entry, bool) {
 	return e, true
 }
 
-func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger) *httputil.ReverseProxy {
+func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, transport http.RoundTripper) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
+		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			outPath := pr.In.URL.Path
 			if route.StripPrefix {
@@ -178,6 +260,22 @@ func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger) *h
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}
+}
+
+// cleanPath canonicalizes p: it ensures a leading slash, collapses "." / ".."
+// and duplicate slashes via path.Clean, and preserves a trailing slash.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	cp := stdpath.Clean(p)
+	if strings.HasSuffix(p, "/") && cp != "/" && !strings.HasSuffix(cp, "/") {
+		cp += "/"
+	}
+	return cp
 }
 
 // pathMatches reports whether path falls under prefix on a path-segment
