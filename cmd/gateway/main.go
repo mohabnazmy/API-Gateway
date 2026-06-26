@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/mohabnazmy/API-Gateway/internal/config"
+	"github.com/mohabnazmy/API-Gateway/internal/gcpauth"
 	"github.com/mohabnazmy/API-Gateway/internal/proxy"
 	"github.com/mohabnazmy/API-Gateway/internal/registry"
 	"github.com/mohabnazmy/API-Gateway/internal/server"
@@ -38,7 +39,8 @@ func main() {
 	// the config store on change. The upstream transport (with timeouts) applies
 	// to every route's reverse proxy.
 	reg := registry.New(logger, proxy.Options{
-		Transport: proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
+		Transport:     proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
+		IDTokenSource: gcpauth.NewIDTokenSource(),
 	})
 	if err := reg.Load(cfg.Routes); err != nil {
 		logger.Error("failed to load routes", "error", err)

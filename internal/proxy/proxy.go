@@ -28,11 +28,20 @@ const (
 	allowedMethodsCtxKey
 )
 
+// IDTokenSource mints OIDC identity tokens for an audience (used to call
+// private Cloud Run upstreams). The gcpauth package provides an implementation.
+type IDTokenSource interface {
+	Token(ctx context.Context, audience string) (string, error)
+}
+
 // Options configures how snapshots build their reverse proxies.
 type Options struct {
 	// Transport is used by every route's reverse proxy. When nil, a default
 	// transport with sane dial/response timeouts is used.
 	Transport http.RoundTripper
+	// IDTokenSource, when set, supplies identity tokens for routes whose
+	// upstream_auth is "google_oidc".
+	IDTokenSource IDTokenSource
 }
 
 // NewTransport builds an upstream transport with the given dial and
@@ -94,7 +103,7 @@ func NewSnapshot(routes []model.Route, logger *slog.Logger, opts ...Options) (*S
 
 	s := &Snapshot{}
 	for _, r := range routes {
-		entry, err := compile(r, logger, transport)
+		entry, err := compile(r, logger, transport, o.IDTokenSource)
 		if err != nil {
 			s.Close() // stop limiters created so far
 			return nil, err
@@ -107,7 +116,7 @@ func NewSnapshot(routes []model.Route, logger *slog.Logger, opts ...Options) (*S
 	return s, nil
 }
 
-func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper) (*Entry, error) {
+func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper, tokens IDTokenSource) (*Entry, error) {
 	target, err := url.Parse(r.Upstream)
 	if err != nil {
 		return nil, fmt.Errorf("route %q: invalid upstream %q: %w", r.Name, r.Upstream, err)
@@ -115,13 +124,18 @@ func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper) (*
 	if target.Scheme == "" || target.Host == "" {
 		return nil, fmt.Errorf("route %q: upstream %q must include scheme and host", r.Name, r.Upstream)
 	}
+	switch r.UpstreamAuth {
+	case "", "google_oidc":
+	default:
+		return nil, fmt.Errorf("route %q: unknown upstream_auth %q", r.Name, r.UpstreamAuth)
+	}
 	limiter, err := ratelimit.New(r.RateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("route %q: %w", r.Name, err)
 	}
 	return &Entry{
 		route:   r,
-		proxy:   newReverseProxy(target, r, logger, transport),
+		proxy:   newReverseProxy(target, r, logger, transport, tokens),
 		limiter: limiter,
 	}, nil
 }
@@ -235,7 +249,11 @@ func EntryFromContext(ctx context.Context) (*Entry, bool) {
 	return e, true
 }
 
-func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, transport http.RoundTripper) *httputil.ReverseProxy {
+func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, transport http.RoundTripper, tokens IDTokenSource) *httputil.ReverseProxy {
+	// Audience for an OIDC upstream is the upstream origin (scheme://host).
+	oidc := route.UpstreamAuth == "google_oidc" && tokens != nil
+	audience := target.Scheme + "://" + target.Host
+
 	return &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -250,6 +268,15 @@ func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, tr
 			pr.Out.URL.Path = singleJoiningSlash(target.Path, outPath)
 			pr.Out.URL.RawPath = ""
 			pr.SetXForwarded()
+
+			if oidc {
+				if token, err := tokens.Token(pr.In.Context(), audience); err == nil {
+					pr.Out.Header.Set("Authorization", "Bearer "+token)
+				} else {
+					logger.Error("upstream oidc token fetch failed",
+						"route", route.Name, "audience", audience, "error", err)
+				}
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Error("upstream request failed",

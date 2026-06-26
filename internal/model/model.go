@@ -13,6 +13,12 @@ type Route struct {
 	Methods     []string        `json:"methods,omitempty"`
 	Auth        AuthPolicy      `json:"auth"`
 	RateLimit   RateLimitPolicy `json:"rate_limit"`
+
+	// UpstreamAuth selects how the gateway authenticates to the upstream when
+	// forwarding. "" = none; "google_oidc" = attach a Google identity token
+	// (audience = upstream origin) so the gateway can call a private Cloud Run
+	// service.
+	UpstreamAuth string `json:"upstream_auth,omitempty"`
 }
 
 // AuthPolicy describes how (and whether) a route is authenticated.
