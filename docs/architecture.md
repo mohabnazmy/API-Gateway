@@ -88,7 +88,7 @@ flowchart TB
 
     subgraph CP["Control plane — PLANNED"]
         direction TB
-        ui["React Admin UI"]:::planned --> api["Admin API (REST)"]:::planned
+        ui["Admin UI (Go templates + HTMX)"]:::planned --> api["Admin API (REST)"]:::planned
         api --> store[("SQLite store")]:::planned
     end
 
@@ -510,7 +510,7 @@ flowchart LR
         direction TB
         p2["Phase 2 — SQLite + hot-reload"]:::planned
         p3["Phase 3 — Admin API + consumers/plans"]:::planned
-        p4["Phase 4 — React Admin UI"]:::planned
+        p4["Phase 4 — Admin UI (Go templates + HTMX)"]:::planned
         p2 --> p3 --> p4
     end
     sec --> p2
@@ -530,7 +530,7 @@ flowchart LR
 | Trusted-proxy XFF · path normalization · upstream timeouts | ✅ Built |
 | SQLite config store + hot-reload | ⏳ Phase 2 |
 | Admin REST API + consumers/plans | ⏳ Phase 3 |
-| React admin UI | ⏳ Phase 4 |
+| Admin UI — Go html/template + HTMX | ⏳ Phase 4 |
 
 See [technical-design.md](./technical-design.md) for the full specification and
 [test-findings.md](./test-findings.md) for the adversarial test results.

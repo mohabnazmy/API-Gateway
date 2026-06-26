@@ -5,7 +5,7 @@ path-prefix routing, authentication, rate limiting, and observability.
 
 Documentation:
 - [`docs/architecture.md`](docs/architecture.md) — application architecture with diagrams.
-- [`docs/technical-design.md`](docs/technical-design.md) — full design (incl. the planned control plane: SQLite store, REST admin API, React UI).
+- [`docs/technical-design.md`](docs/technical-design.md) — full design (incl. the planned control plane: SQLite store, REST admin API, Go-templates admin UI).
 - [`docs/concepts-and-auth-decisions.md`](docs/concepts-and-auth-decisions.md) — plain-language guide to the concepts and auth decisions.
 - [`docs/test-findings.md`](docs/test-findings.md) — adversarial edge-case test results.
 
