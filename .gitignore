@@ -16,6 +16,10 @@
 .env.local
 !.env.example
 
+# Deployment details (project IDs, secrets, scripts) — kept entirely local
+/deploy/
+/.gcloudignore
+
 # Editor / OS
 .DS_Store
 .idea/
