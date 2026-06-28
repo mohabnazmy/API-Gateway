@@ -91,6 +91,39 @@ Bootstrap configuration comes from environment variables:
 | `rate_limit.rps` | number | Sustained requests/sec. `rps <= 0` disables limiting. |
 | `rate_limit.burst` | number | Bucket capacity (token/leaky bucket). |
 | `rate_limit.window_sec` | number | Window length for the window algorithms (default `1`); per-window limit = `rps × window_sec`. |
+| `upstream_auth.type` | string | How the gateway authenticates to the upstream (see below); `none` (default). |
+
+#### Upstream authentication
+
+By default the gateway forwards requests to the upstream unauthenticated
+(`upstream_auth.type: "none"`). Set a mode when the upstream itself requires the
+gateway to authenticate. Secret-bearing fields end in `_ref` and accept
+`env:NAME`, `file:/path`, or a literal value, so secrets stay out of route JSON.
+
+| Mode | Behavior | Fields |
+|------|----------|--------|
+| `none` *(default)* | Forward as-is; no credentials attached. | — |
+| `bearer` | Attach a static token/API key to a header. | `token_ref`; optional `header` (default `Authorization`), `scheme` (default `Bearer`; `none` = raw value) |
+| `google_oidc` | Attach a Google-signed identity token (audience = upstream origin) as a `Bearer`, to call a **private Cloud Run** service. Requires running on GCP (metadata server reachable). | optional `audience` |
+| `oauth2_client_credentials` | Fetch+cache a token via the OAuth2 client-credentials grant, attach as `Bearer`. Works with Auth0/Okta/Keycloak/Azure AD. | `token_url`, `client_id`, `client_secret_ref`; optional `scopes`, `audience` |
+| `aws_sigv4` | Sign requests with AWS SigV4 to call private AWS targets (API Gateway, Lambda URLs). Credentials from the standard AWS chain (env/role). | `region`; optional `service` (default `execute-api`) |
+| `mtls` | Present a client certificate at the transport layer (mutual TLS). | `cert_ref`, `key_ref` |
+
+```jsonc
+"upstream_auth": { "type": "oauth2_client_credentials",
+  "token_url": "https://issuer/oauth/token",
+  "client_id": "gw", "client_secret_ref": "env:OAUTH_SECRET",
+  "scopes": ["api.read"] }
+```
+
+The legacy bare-string form (`"upstream_auth": "google_oidc"`) is still accepted.
+See [`docs/upstream-auth-design.md`](docs/upstream-auth-design.md) for the design.
+
+On a route with `upstream_auth` set, the gateway:
+- **fails closed** — if it cannot mint/sign the credential, the request returns
+  `502` and is never forwarded uncredentialed; and
+- **strips the caller's inbound `Authorization` / `X-API-Key`** before forwarding,
+  so the gateway credential the client used is not leaked to the upstream.
 
 #### Rate-limit algorithms
 

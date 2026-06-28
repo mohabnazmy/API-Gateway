@@ -36,7 +36,8 @@ func main() {
 	// The registry holds the live config snapshot the data plane reads. In Phase
 	// 1 it is loaded once from the bootstrap config; later phases reload it from
 	// the config store on change. The upstream transport (with timeouts) applies
-	// to every route's reverse proxy.
+	// to every route's reverse proxy. Per-route upstream authentication (e.g.
+	// google_oidc) is built by internal/upstreamauth during route compilation.
 	reg := registry.New(logger, proxy.Options{
 		Transport: proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
 	})

@@ -19,6 +19,7 @@ import (
 
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 	"github.com/mohabnazmy/API-Gateway/internal/ratelimit"
+	"github.com/mohabnazmy/API-Gateway/internal/upstreamauth"
 )
 
 type ctxKey int
@@ -59,6 +60,30 @@ type Entry struct {
 	route   model.Route
 	proxy   *httputil.ReverseProxy
 	limiter ratelimit.Limiter // nil when the route has no rate limit
+	// ownedTransport is a per-route transport this entry created (e.g. the mtls
+	// clone); it is closed when the snapshot is discarded. nil when the route
+	// shares the base transport.
+	ownedTransport *http.Transport
+}
+
+// authTransport applies a route's upstream Authenticator to each outbound
+// request just before it is sent. Returning an error here aborts the request —
+// ReverseProxy routes it to ErrorHandler (→ 502) — so a failure to mint or
+// attach a credential fails CLOSED rather than forwarding the request
+// uncredentialed to a private upstream.
+type authTransport struct {
+	base   http.RoundTripper
+	authn  upstreamauth.Authenticator
+	route  string
+	logger *slog.Logger
+}
+
+func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := t.authn.Apply(req.Context(), req); err != nil {
+		t.logger.Error("upstream auth failed", "route", t.route, "error", err)
+		return nil, fmt.Errorf("upstream auth: %w", err)
+	}
+	return t.base.RoundTrip(req)
 }
 
 // Route returns the route's configuration.
@@ -115,14 +140,38 @@ func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper) (*
 	if target.Scheme == "" || target.Host == "" {
 		return nil, fmt.Errorf("route %q: upstream %q must include scheme and host", r.Name, r.Upstream)
 	}
+	// Default audience for a token-minting upstream-auth mode is the upstream
+	// origin (scheme://host); the route may override it.
+	authn, err := upstreamauth.New(r.UpstreamAuth, target.Scheme+"://"+target.Host)
+	if err != nil {
+		return nil, fmt.Errorf("route %q: %w", r.Name, err)
+	}
+	// Transport-layer modes (mTLS) get a per-route transport; everything else
+	// shares the base transport.
+	rt, err := upstreamauth.Transport(r.UpstreamAuth, transport)
+	if err != nil {
+		return nil, fmt.Errorf("route %q: %w", r.Name, err)
+	}
+	// A per-route transport (rt != base) is owned by this entry and must be
+	// closed when the snapshot is discarded, or its idle connections leak.
+	var owned *http.Transport
+	if rt != transport {
+		owned, _ = rt.(*http.Transport)
+	}
+	// Apply request-mutating auth in the transport so an auth error fails closed.
+	final := rt
+	if authn != nil {
+		final = &authTransport{base: rt, authn: authn, route: r.Name, logger: logger}
+	}
 	limiter, err := ratelimit.New(r.RateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("route %q: %w", r.Name, err)
 	}
 	return &Entry{
-		route:   r,
-		proxy:   newReverseProxy(target, r, logger, transport),
-		limiter: limiter,
+		route:          r,
+		proxy:          newReverseProxy(target, r, logger, final),
+		limiter:        limiter,
+		ownedTransport: owned,
 	}, nil
 }
 
@@ -135,11 +184,15 @@ func (s *Snapshot) Routes() []model.Route {
 	return out
 }
 
-// Close stops every limiter in the snapshot. Call it when discarding a snapshot.
+// Close stops every limiter in the snapshot and closes any per-route transports
+// it owns. Call it when discarding a snapshot.
 func (s *Snapshot) Close() {
 	for _, e := range s.entries {
 		if e.limiter != nil {
 			e.limiter.Stop()
+		}
+		if e.ownedTransport != nil {
+			e.ownedTransport.CloseIdleConnections()
 		}
 	}
 }
@@ -236,6 +289,7 @@ func EntryFromContext(ctx context.Context) (*Entry, bool) {
 }
 
 func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, transport http.RoundTripper) *httputil.ReverseProxy {
+	stripInboundCreds := route.UpstreamAuth.Enabled()
 	return &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -250,6 +304,14 @@ func newReverseProxy(target *url.URL, route model.Route, logger *slog.Logger, tr
 			pr.Out.URL.Path = singleJoiningSlash(target.Path, outPath)
 			pr.Out.URL.RawPath = ""
 			pr.SetXForwarded()
+
+			// When the gateway authenticates to the upstream itself, don't leak
+			// the caller's gateway credential upstream. The route's own auth (in
+			// authTransport) sets its header afterwards, so this never clobbers it.
+			if stripInboundCreds {
+				pr.Out.Header.Del("Authorization")
+				pr.Out.Header.Del("X-API-Key")
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Error("upstream request failed",
