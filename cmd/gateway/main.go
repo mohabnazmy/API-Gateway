@@ -12,7 +12,6 @@ import (
 	"syscall"
 
 	"github.com/mohabnazmy/API-Gateway/internal/config"
-	"github.com/mohabnazmy/API-Gateway/internal/gcpauth"
 	"github.com/mohabnazmy/API-Gateway/internal/proxy"
 	"github.com/mohabnazmy/API-Gateway/internal/registry"
 	"github.com/mohabnazmy/API-Gateway/internal/server"
@@ -37,10 +36,10 @@ func main() {
 	// The registry holds the live config snapshot the data plane reads. In Phase
 	// 1 it is loaded once from the bootstrap config; later phases reload it from
 	// the config store on change. The upstream transport (with timeouts) applies
-	// to every route's reverse proxy.
+	// to every route's reverse proxy. Per-route upstream authentication (e.g.
+	// google_oidc) is built by internal/upstreamauth during route compilation.
 	reg := registry.New(logger, proxy.Options{
-		Transport:     proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
-		IDTokenSource: gcpauth.NewIDTokenSource(),
+		Transport: proxy.NewTransport(cfg.UpstreamDialTimeout, cfg.UpstreamResponseTimeout),
 	})
 	if err := reg.Load(cfg.Routes); err != nil {
 		logger.Error("failed to load routes", "error", err)
