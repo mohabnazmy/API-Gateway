@@ -23,9 +23,9 @@ func TestPathMatches(t *testing.T) {
 	}{
 		{"/api", "/api", true},
 		{"/api/x", "/api", true},
-		{"/apiv2", "/api", false},     // segment boundary
-		{"/api/", "/api/", true},      // prefix with trailing slash
-		{"/", "/api", false},          // shorter than prefix
+		{"/apiv2", "/api", false}, // segment boundary
+		{"/api/", "/api/", true},  // prefix with trailing slash
+		{"/", "/api", false},      // shorter than prefix
 		{"/api/users/42", "/api/users", true},
 		{"/apiusers", "/api/users", false},
 	}
