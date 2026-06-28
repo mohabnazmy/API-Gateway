@@ -74,7 +74,7 @@ func (s *IDTokenSource) fetch(ctx context.Context, audience string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("metadata identity request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("metadata identity status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

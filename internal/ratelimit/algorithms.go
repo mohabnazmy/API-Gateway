@@ -164,10 +164,10 @@ func (s *slidingWindow) allow() (bool, Result) {
 	win := int64(s.window)
 	index := now / win
 
-	switch {
-	case index == s.curIndex:
+	switch index {
+	case s.curIndex:
 		// same window
-	case index == s.curIndex+1:
+	case s.curIndex + 1:
 		s.prevCount, s.curCount = s.curCount, 0
 		s.curIndex = index
 	default: // gap of two or more windows: previous is fully stale

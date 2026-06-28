@@ -1,0 +1,11 @@
+# golangci-lint configuration (v2 schema).
+# Run locally with: golangci-lint run ./...
+version: "2"
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused — the
+  # high-value core that catches unchecked errors, bugs, and dead code.
+  default: standard
+  enable:
+    - misspell   # common spelling mistakes in comments/strings
+    - unconvert  # redundant type conversions

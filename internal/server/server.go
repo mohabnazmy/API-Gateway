@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/mohabnazmy/API-Gateway/internal/config"
@@ -22,7 +23,7 @@ import (
 // server. The returned server is ready to ListenAndServe.
 func New(cfg *config.Config, reg *registry.Registry, logger *slog.Logger) *http.Server {
 	promReg := prometheus.NewRegistry()
-	promReg.MustRegister(prometheus.NewGoCollector())
+	promReg.MustRegister(collectors.NewGoCollector())
 	metrics := middleware.NewMetrics(promReg)
 	auth := middleware.NewAuthenticator(cfg.JWTSecret, cfg.APIKeys)
 	realIP := middleware.NewRealIP(cfg.TrustedProxies)
