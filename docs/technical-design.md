@@ -1,6 +1,6 @@
 # API Gateway — Technical Design
 
-**Status:** Draft · **Owner:** mohabnazmy · **Last updated:** 2026-06-19 · **Language:** Go + React
+**Status:** Draft · **Owner:** mohabnazmy · **Last updated:** 2026-06-26 · **Language:** Go (admin UI: html/template + HTMX)
 
 > See [architecture.md](./architecture.md) for the application architecture with
 > diagrams (system context, two-plane view, module map, request lifecycle,
@@ -16,15 +16,15 @@ has two parts:
 - **Data plane** — the gateway proper: it sits in front of backend services and
   handles routing, authentication, rate limiting, and observability for every
   request.
-- **Control plane** — a config store, a REST **Admin API**, and a **React admin
-  UI** for managing routes and policies *live*, without restarting or
-  redeploying the gateway.
+- **Control plane** — a config store, a REST **Admin API**, and a **server-rendered
+  admin UI** (Go `html/template` + HTMX) for managing routes and policies *live*,
+  without restarting or redeploying the gateway.
 
 ```
             ┌───────────────────── CONTROL PLANE ─────────────────────┐
             │                                                          │
-            │   React Admin UI  ──►  Admin API (REST)  ──►  Config     │
-            │   (operator login)     (authenticated)        Store      │
+            │   Admin UI (Go+HTMX) ─► Admin API (REST) ─► Config       │
+            │   (operator login)      (authenticated)      Store       │
             │                                              (SQLite)     │
             └───────────────────────────────────────────────┬──────────┘
                                                             │ hot-reload
@@ -109,7 +109,7 @@ swaps** whenever config changes (see [§11 Hot-Reload](#11-control-plane--hot-re
 | C3 | Apply config changes to the running data plane via hot-reload (no restart). |
 | C4 | Authenticate the Admin API/UI; never expose it on the public proxy port. |
 | C5 | Manage API keys (create / list / revoke); store key **hashes**, never plaintext. |
-| C6 | Serve a React admin UI for all of the above. |
+| C6 | Serve a server-rendered admin UI (Go `html/template` + HTMX) for all of the above. |
 | C7 | Model **consumers** (customers) and **plans** (tiers); each API key belongs to a consumer, and rate limits/quotas derive from the consumer's plan. |
 
 ### Non-functional
@@ -138,8 +138,8 @@ swaps** whenever config changes (see [§11 Hot-Reload](#11-control-plane--hot-re
 | Logging | `log/slog` (stdlib) | Structured logging, no third-party dep. |
 | **Config store** | **SQLite** (`modernc.org/sqlite`, pure-Go) | Embedded, zero external deps, durable. Pure-Go driver keeps `CGO_ENABLED=0` static builds. |
 | **DB access** | `database/sql` + hand-written SQL (or `sqlc`) | Simple, explicit, testable. |
-| **Admin UI** | **React SPA** (Vite + TypeScript) | Standard admin-dashboard UX. |
-| **UI delivery** | Go `embed.FS` | Built React assets embedded into the binary → still one artifact. |
+| **Admin UI** | **Go `html/template` + HTMX** | Server-rendered; one language, no JS build, auto-escaping (XSS-safe). |
+| **UI delivery** | Go `embed.FS` | Templates + the HTMX asset embedded into the binary → one artifact, one language. |
 | Bootstrap config | Environment variables | Only for secrets, ports, and DB path (see [§16](#16-bootstrap-configuration)). |
 
 ---
@@ -161,9 +161,9 @@ gateway/
 │   ├── ratelimit/             # pluggable algorithms behind a Limiter interface
 │   ├── admin/                 # CONTROL PLANE: REST handlers, admin auth, validation
 │   └── server/                # wires the public proxy server + private admin server
-├── web/                       # React admin UI (Vite + TS)
-│   ├── src/…
-│   └── dist/                  # build output, embedded via embed.FS
+├── internal/admin/web/        # admin UI: Go html/template pages + HTMX
+│   ├── templates/             # *.html templates (embedded via embed.FS)
+│   └── static/                # htmx.min.js + minimal CSS (embedded)
 ├── docs/
 │   ├── technical-design.md
 │   └── concepts-and-auth-decisions.md
@@ -468,15 +468,23 @@ REST/JSON under `/admin/api`, served on the **private admin listener** only.
 
 ---
 
-## 14. Control Plane — Admin UI (React)
+## 14. Control Plane — Admin UI (Go templates + HTMX)
 
-- **Stack:** React + TypeScript + Vite. Talks only to the Admin API (REST/JSON).
+- **Stack:** **server-rendered Go `html/template`** pages, with **HTMX** (a single
+  ~14 KB JS file, no build step) for partial updates. No React, no Node/npm, no
+  JS toolchain.
 - **Screens:** routes list/editor (with auth + rate-limit policy forms), API-key
-  management (create/copy-once/revoke), login, and a dashboard surfacing the
-  Prometheus metrics.
-- **Delivery:** `vite build` → static assets in `web/dist/`, **embedded into the
-  Go binary via `embed.FS`** and served by the admin listener. One deploy
-  artifact despite two languages (N6).
+  management (create/copy-once/revoke), consumers/plans, login, and a dashboard
+  surfacing the Prometheus metrics.
+- **Delivery:** templates + the static HTMX asset are **embedded via `embed.FS`**
+  and served by the admin listener — one static binary, one language (N6).
+- **Why not a React SPA:** for a public, reusable, secure single-binary gateway,
+  server-rendered Go wins — one `go build` (no JS toolchain for contributors),
+  `html/template` **auto-escapes by default** (XSS-safe), and it drops the npm
+  supply chain from the attack surface. A gateway admin panel is CRUD over
+  routes/keys/consumers + a metrics view, which HTMX handles well. (Same approach
+  as Traefik/Caddy.) A React SPA would only pay off for a much richer,
+  app-like UI.
 
 ---
 
@@ -567,8 +575,9 @@ Each phase is independently shippable and testable.
    immutable snapshot; `registry.Current()` lock-free reads; hot-reload swap.
 3. **Phase 3 — Admin API.** REST CRUD over the store with validation, admin
    login/sessions, consumer/plan + API-key management; trigger hot-reload on writes.
-4. **Phase 4 — Admin UI.** React app for routes/policies/keys/dashboard, embedded
-   and served from the admin listener.
+4. **Phase 4 — Admin UI.** Server-rendered Go `html/template` + HTMX pages for
+   routes/policies/keys/consumers/dashboard, embedded via `embed.FS` and served
+   from the admin listener.
 
 ---
 
