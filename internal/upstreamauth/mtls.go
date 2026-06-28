@@ -18,15 +18,18 @@ func Transport(cfg model.UpstreamAuth, base http.RoundTripper) (http.RoundTrippe
 	if cfg.Type != "mtls" {
 		return base, nil
 	}
-	bt, ok := base.(*http.Transport)
-	if !ok {
-		return nil, fmt.Errorf("mtls: base transport is not *http.Transport")
-	}
 	cert, err := loadCert(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("mtls: %w", err)
 	}
 
+	// Clone the base transport to preserve its timeouts/proxy settings. If base
+	// is a wrapping RoundTripper we can't reach into, fall back to a default
+	// transport so the route still works instead of failing the whole snapshot.
+	bt, ok := base.(*http.Transport)
+	if !ok {
+		bt = http.DefaultTransport.(*http.Transport)
+	}
 	clone := bt.Clone()
 	if clone.TLSClientConfig == nil {
 		clone.TLSClientConfig = &tls.Config{}

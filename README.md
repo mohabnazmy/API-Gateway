@@ -119,6 +119,12 @@ gateway to authenticate. Secret-bearing fields end in `_ref` and accept
 The legacy bare-string form (`"upstream_auth": "google_oidc"`) is still accepted.
 See [`docs/upstream-auth-design.md`](docs/upstream-auth-design.md) for the design.
 
+On a route with `upstream_auth` set, the gateway:
+- **fails closed** — if it cannot mint/sign the credential, the request returns
+  `502` and is never forwarded uncredentialed; and
+- **strips the caller's inbound `Authorization` / `X-API-Key`** before forwarding,
+  so the gateway credential the client used is not leaked to the upstream.
+
 #### Rate-limit algorithms
 
 | Algorithm | Behavior | Params used |

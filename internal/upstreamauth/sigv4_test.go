@@ -48,3 +48,21 @@ func TestSigV4RequiresRegion(t *testing.T) {
 		t.Fatal("expected error for missing region")
 	}
 }
+
+func TestSigV4BodyCap(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secretkey")
+
+	orig := maxSignBodyBytes
+	maxSignBodyBytes = 16
+	defer func() { maxSignBodyBytes = orig }()
+
+	a, err := newSigV4(model.UpstreamAuth{Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.example.com/x", strings.NewReader(strings.Repeat("a", 64)))
+	if err := a.Apply(context.Background(), req); err == nil {
+		t.Fatal("expected error for body over the signing cap")
+	}
+}

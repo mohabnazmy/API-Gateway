@@ -22,8 +22,9 @@ const metadataIdentityURL = "http://metadata.google.internal/computeMetadata/v1/
 type IDTokenSource struct {
 	client *http.Client
 
-	mu    sync.Mutex
-	cache map[string]cachedToken
+	fetchMu sync.Mutex // serializes metadata fetches (single-flight)
+	mu      sync.Mutex // guards cache; never held during a fetch
+	cache   map[string]cachedToken
 }
 
 type cachedToken struct {
@@ -43,23 +44,34 @@ func NewIDTokenSource() *IDTokenSource {
 // Token returns a valid identity token for the given audience, fetching a new
 // one when the cache is empty or near expiry.
 func (s *IDTokenSource) Token(ctx context.Context, audience string) (string, error) {
-	s.mu.Lock()
-	if t, ok := s.cache[audience]; ok && time.Until(t.expiry) > time.Minute {
-		s.mu.Unlock()
-		return t.token, nil
+	if t, ok := s.cached(audience); ok {
+		return t, nil
 	}
-	s.mu.Unlock()
+	// Single-flight: only one goroutine fetches at a time; others wait, then hit
+	// the cache populated below. The cache lock is never held during the fetch.
+	s.fetchMu.Lock()
+	defer s.fetchMu.Unlock()
+	if t, ok := s.cached(audience); ok {
+		return t, nil
+	}
 
 	token, err := s.fetch(ctx, audience)
 	if err != nil {
 		return "", err
 	}
-	expiry := tokenExpiry(token)
-
 	s.mu.Lock()
-	s.cache[audience] = cachedToken{token: token, expiry: expiry}
+	s.cache[audience] = cachedToken{token: token, expiry: tokenExpiry(token)}
 	s.mu.Unlock()
 	return token, nil
+}
+
+func (s *IDTokenSource) cached(audience string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.cache[audience]; ok && time.Until(t.expiry) > time.Minute {
+		return t.token, true
+	}
+	return "", false
 }
 
 func (s *IDTokenSource) fetch(ctx context.Context, audience string) (string, error) {

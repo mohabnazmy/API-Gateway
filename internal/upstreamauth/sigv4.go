@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,6 +16,33 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
+
+// maxSignBodyBytes caps how much request body SigV4 buffers in memory to hash.
+// SigV4 needs the whole payload up front (the proxy normally streams it), so a
+// huge upload would otherwise balloon memory; over the cap the request fails
+// closed rather than risking OOM. A var so tests can shrink it.
+var maxSignBodyBytes int64 = 10 << 20 // 10 MiB
+
+// awsConfigCache shares one loaded aws.Config per region, so N sigv4 routes
+// don't each re-parse the AWS credential chain at compile/reload time.
+var (
+	awsConfigMu    sync.Mutex
+	awsConfigCache = map[string]aws.Config{}
+)
+
+func loadAWSConfig(region string) (aws.Config, error) {
+	awsConfigMu.Lock()
+	defer awsConfigMu.Unlock()
+	if c, ok := awsConfigCache[region]; ok {
+		return c, nil
+	}
+	c, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
+	if err != nil {
+		return aws.Config{}, err
+	}
+	awsConfigCache[region] = c
+	return c, nil
+}
 
 // sigv4 signs outbound requests with AWS Signature Version 4, so the gateway can
 // call private AWS targets (API Gateway, Lambda function URLs, ALB with IAM).
@@ -31,7 +59,7 @@ func newSigV4(cfg model.UpstreamAuth) (*sigv4, error) {
 	if cfg.Region == "" {
 		return nil, fmt.Errorf("aws_sigv4: region is required")
 	}
-	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(cfg.Region))
+	awsCfg, err := loadAWSConfig(cfg.Region)
 	if err != nil {
 		return nil, fmt.Errorf("aws_sigv4: load credentials: %w", err)
 	}
@@ -53,10 +81,15 @@ func (s *sigv4) Apply(ctx context.Context, out *http.Request) error {
 	// it, hash it, then restore a fresh reader for forwarding.
 	var body []byte
 	if out.Body != nil {
-		b, err := io.ReadAll(out.Body)
+		// Read at most maxSignBodyBytes+1 so we can detect (and reject) an
+		// oversized body instead of buffering it all.
+		b, err := io.ReadAll(io.LimitReader(out.Body, maxSignBodyBytes+1))
 		_ = out.Body.Close()
 		if err != nil {
 			return fmt.Errorf("aws_sigv4: read body: %w", err)
+		}
+		if int64(len(b)) > maxSignBodyBytes {
+			return fmt.Errorf("aws_sigv4: request body exceeds %d bytes signing limit", maxSignBodyBytes)
 		}
 		body = b
 		out.Body = io.NopCloser(bytes.NewReader(body))

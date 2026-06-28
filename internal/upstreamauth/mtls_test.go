@@ -99,3 +99,24 @@ func TestTransportMTLSMissingRefs(t *testing.T) {
 		t.Fatal("expected error for missing cert_ref/key_ref")
 	}
 }
+
+// wrappingRT is a RoundTripper that is not an *http.Transport.
+type wrappingRT struct{ http.RoundTripper }
+
+func TestTransportMTLSWrappedBase(t *testing.T) {
+	certPath, keyPath := writeSelfSignedPair(t)
+	// A wrapping RoundTripper can't be type-asserted to *http.Transport; mtls
+	// must still produce a working transport instead of failing the snapshot.
+	got, err := Transport(model.UpstreamAuth{
+		Type:    "mtls",
+		CertRef: "file:" + certPath,
+		KeyRef:  "file:" + keyPath,
+	}, wrappingRT{http.DefaultTransport})
+	if err != nil {
+		t.Fatalf("mtls with wrapped base should not error: %v", err)
+	}
+	rt, ok := got.(*http.Transport)
+	if !ok || rt.TLSClientConfig == nil || len(rt.TLSClientConfig.Certificates) != 1 {
+		t.Fatalf("expected a transport carrying the client cert, got %T", got)
+	}
+}

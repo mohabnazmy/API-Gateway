@@ -13,15 +13,19 @@ import (
 
 func TestOAuth2ClientCredentials(t *testing.T) {
 	var hits int32
-	var gotUser, gotPass, gotScope, gotGrant string
+	var gotUser, gotPass, gotScope, gotGrant, gotAudience string
+	var audienceSent bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		gotUser, gotPass, _ = basicAuth(r)
 		_ = r.ParseForm()
 		gotScope = r.Form.Get("scope")
 		gotGrant = r.Form.Get("grant_type")
+		gotAudience = r.Form.Get("audience")
+		_, audienceSent = r.Form["audience"]
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"at-1","token_type":"Bearer","expires_in":3600}`))
+		// expires_in as a STRING — some issuers do this; must still parse.
+		_, _ = w.Write([]byte(`{"access_token":"at-1","token_type":"Bearer","expires_in":"3600"}`))
 	}))
 	defer srv.Close()
 
@@ -29,7 +33,7 @@ func TestOAuth2ClientCredentials(t *testing.T) {
 		TokenURL: srv.URL,
 		ClientID: "cid",
 		Scopes:   []string{"api.read", "api.write"},
-	}, "https://up.example")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +57,10 @@ func TestOAuth2ClientCredentials(t *testing.T) {
 	if gotGrant != "client_credentials" || gotScope != "api.read api.write" || gotUser != "cid" || gotPass != "" {
 		t.Fatalf("request: grant=%q scope=%q user=%q pass=%q", gotGrant, gotScope, gotUser, gotPass)
 	}
+	// No audience configured → the audience param must NOT be sent.
+	if audienceSent {
+		t.Fatalf("audience sent without being configured: %q", gotAudience)
+	}
 
 	// Expire the cache: the next call refetches.
 	a.mu.Lock()
@@ -64,13 +72,35 @@ func TestOAuth2ClientCredentials(t *testing.T) {
 	}
 }
 
+func TestOAuth2AudienceSentWhenConfigured(t *testing.T) {
+	var gotAudience string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotAudience = r.Form.Get("audience")
+		_, _ = w.Write([]byte(`{"access_token":"at","expires_in":3600}`))
+	}))
+	defer srv.Close()
+
+	a, err := newOAuth2(model.UpstreamAuth{TokenURL: srv.URL, ClientID: "cid", Audience: "https://api.internal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://up/x", nil)
+	if err := a.Apply(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if gotAudience != "https://api.internal" {
+		t.Fatalf("audience = %q, want the configured value", gotAudience)
+	}
+}
+
 func basicAuth(r *http.Request) (string, string, bool) { return r.BasicAuth() }
 
 func TestOAuth2Validation(t *testing.T) {
-	if _, err := newOAuth2(model.UpstreamAuth{ClientID: "x"}, ""); err == nil {
+	if _, err := newOAuth2(model.UpstreamAuth{ClientID: "x"}); err == nil {
 		t.Fatal("expected error for missing token_url")
 	}
-	if _, err := newOAuth2(model.UpstreamAuth{TokenURL: "https://t"}, ""); err == nil {
+	if _, err := newOAuth2(model.UpstreamAuth{TokenURL: "https://t"}); err == nil {
 		t.Fatal("expected error for missing client_id")
 	}
 }

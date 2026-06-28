@@ -42,7 +42,10 @@ func New(cfg model.UpstreamAuth, defaultAudience string) (Authenticator, error) 
 		}
 		return newGoogleOIDC(audience), nil
 	case "oauth2_client_credentials":
-		return newOAuth2(cfg, defaultAudience)
+		// Unlike google_oidc, the OAuth2 audience is NOT defaulted to the upstream
+		// origin: audience-validating issuers expect a registered API identifier,
+		// so it is sent only when the route sets it explicitly.
+		return newOAuth2(cfg)
 	case "aws_sigv4":
 		return newSigV4(cfg)
 	case "mtls":

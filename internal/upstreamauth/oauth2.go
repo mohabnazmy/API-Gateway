@@ -1,18 +1,38 @@
 package upstreamauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 )
+
+// flexInt decodes a JSON value that may be a number or a numeric string, since
+// some OAuth2 issuers return expires_in as a quoted string.
+type flexInt int64
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(bytes.Trim(b, `"`)))
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("expires_in %q: %w", s, err)
+	}
+	*f = flexInt(n)
+	return nil
+}
 
 // oauth2CC implements the OAuth2 client-credentials grant: it fetches an access
 // token from a token endpoint and caches it until shortly before expiry, then
@@ -26,13 +46,14 @@ type oauth2CC struct {
 	audience string // optional (e.g. Auth0)
 	client   *http.Client
 
-	mu     sync.Mutex
-	token  string
-	expiry time.Time
-	now    func() time.Time // injectable for tests
+	fetchMu sync.Mutex // serializes token fetches (single-flight); held across network I/O
+	mu      sync.Mutex // guards the cached token; never held during a fetch
+	token   string
+	expiry  time.Time
+	now     func() time.Time // injectable for tests
 }
 
-func newOAuth2(cfg model.UpstreamAuth, defaultAudience string) (*oauth2CC, error) {
+func newOAuth2(cfg model.UpstreamAuth) (*oauth2CC, error) {
 	if cfg.TokenURL == "" {
 		return nil, fmt.Errorf("oauth2_client_credentials: token_url is required")
 	}
@@ -43,16 +64,12 @@ func newOAuth2(cfg model.UpstreamAuth, defaultAudience string) (*oauth2CC, error
 	if err != nil {
 		return nil, fmt.Errorf("oauth2_client_credentials: %w", err)
 	}
-	audience := cfg.Audience
-	if audience == "" {
-		audience = defaultAudience
-	}
 	return &oauth2CC{
 		tokenURL: cfg.TokenURL,
 		clientID: cfg.ClientID,
 		secret:   secret,
 		scope:    strings.Join(cfg.Scopes, " "),
-		audience: audience,
+		audience: cfg.Audience, // sent only when explicitly configured
 		client:   &http.Client{Timeout: 10 * time.Second},
 		now:      time.Now,
 	}, nil
@@ -68,22 +85,40 @@ func (o *oauth2CC) Apply(ctx context.Context, out *http.Request) error {
 }
 
 func (o *oauth2CC) accessToken(ctx context.Context) (string, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.token != "" && o.now().Before(o.expiry) {
-		return o.token, nil
+	if t, ok := o.cached(); ok {
+		return t, nil
 	}
+	// Single-flight: one goroutine fetches while others wait on fetchMu, then
+	// re-check the cache. The cache lock (o.mu) is never held during the network
+	// call, so cache hits aren't blocked by an in-flight refresh.
+	o.fetchMu.Lock()
+	defer o.fetchMu.Unlock()
+	if t, ok := o.cached(); ok {
+		return t, nil
+	}
+
 	token, ttl, err := o.fetch(ctx)
 	if err != nil {
 		return "", err
 	}
-	o.token = token
 	// Refresh a minute early to avoid racing expiry; clamp tiny TTLs.
 	if ttl > time.Minute {
 		ttl -= time.Minute
 	}
+	o.mu.Lock()
+	o.token = token
 	o.expiry = o.now().Add(ttl)
+	o.mu.Unlock()
 	return token, nil
+}
+
+func (o *oauth2CC) cached() (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.token != "" && o.now().Before(o.expiry) {
+		return o.token, true
+	}
+	return "", false
 }
 
 func (o *oauth2CC) fetch(ctx context.Context) (string, time.Duration, error) {
@@ -113,8 +148,8 @@ func (o *oauth2CC) fetch(ctx context.Context) (string, time.Duration, error) {
 	}
 
 	var tr struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
+		AccessToken string  `json:"access_token"`
+		ExpiresIn   flexInt `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return "", 0, fmt.Errorf("decode token response: %w", err)
