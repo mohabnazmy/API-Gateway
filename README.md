@@ -91,6 +91,27 @@ Bootstrap configuration comes from environment variables:
 | `rate_limit.rps` | number | Sustained requests/sec. `rps <= 0` disables limiting. |
 | `rate_limit.burst` | number | Bucket capacity (token/leaky bucket). |
 | `rate_limit.window_sec` | number | Window length for the window algorithms (default `1`); per-window limit = `rps × window_sec`. |
+| `upstream_auth.type` | string | How the gateway authenticates to the upstream: `none` (default) or `google_oidc`. |
+| `upstream_auth.audience` | string | Token audience for token-minting modes. Empty = the upstream origin (`scheme://host`). |
+
+#### Upstream authentication
+
+By default the gateway forwards requests to the upstream unauthenticated
+(`upstream_auth.type: "none"`). Set a mode when the upstream itself requires the
+gateway to authenticate:
+
+| Mode | Behavior |
+|------|----------|
+| `none` *(default)* | Forward as-is; no credentials attached. |
+| `google_oidc` | Attach a Google-signed identity token (audience = upstream origin) as a `Bearer` token, so the gateway can call a **private Cloud Run** service. Requires running on GCP (Cloud Run / GCE) where the metadata server is reachable. |
+
+```jsonc
+"upstream_auth": { "type": "google_oidc" }   // audience defaults to the upstream origin
+```
+
+The legacy bare-string form (`"upstream_auth": "google_oidc"`) is still accepted.
+Upstream auth is pluggable — `bearer`, `oauth2_client_credentials`, `aws_sigv4`,
+and `mtls` are planned; see [`docs/upstream-auth-design.md`](docs/upstream-auth-design.md).
 
 #### Rate-limit algorithms
 
