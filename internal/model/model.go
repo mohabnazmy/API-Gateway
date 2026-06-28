@@ -26,19 +26,39 @@ type Route struct {
 
 // UpstreamAuth selects how (and whether) the gateway authenticates its outbound
 // requests to a route's upstream. The zero value (Type "" / "none") means no
-// upstream auth.
+// upstream auth. Fields are grouped by the Type that uses them; see
+// docs/upstream-auth-design.md.
 //
-// Phase 1 supports "google_oidc" (attach a Google identity token, audience =
-// upstream origin, so the gateway can call a private Cloud Run service). Future
-// modes — "bearer", "oauth2_client_credentials", "aws_sigv4", "mtls" — plug in
-// at the same Type field; see docs/upstream-auth-design.md.
+// Secret-bearing fields end in "_ref" and accept "env:NAME" (read an environment
+// variable), "file:/path" (read a file), or a literal value — so secrets stay
+// out of the route JSON.
 type UpstreamAuth struct {
-	// Type selects the authentication mode.
+	// Type selects the authentication mode: "" / "none", "bearer", "google_oidc",
+	// "oauth2_client_credentials", "aws_sigv4", or "mtls".
 	Type string `json:"type,omitempty"`
 
-	// Audience overrides the token audience for token-minting modes. When empty,
-	// it defaults to the upstream origin (scheme://host).
+	// Audience overrides the token audience for token-minting modes
+	// (google_oidc, oauth2_client_credentials). Empty = the upstream origin.
 	Audience string `json:"audience,omitempty"`
+
+	// bearer: attach a static credential.
+	TokenRef string `json:"token_ref,omitempty"` // the token/key (secret ref)
+	Header   string `json:"header,omitempty"`    // target header (default "Authorization")
+	Scheme   string `json:"scheme,omitempty"`    // value prefix (default "Bearer"; "none" = raw)
+
+	// oauth2_client_credentials: fetch+cache a token via the client-credentials grant.
+	TokenURL        string   `json:"token_url,omitempty"`
+	ClientID        string   `json:"client_id,omitempty"`
+	ClientSecretRef string   `json:"client_secret_ref,omitempty"`
+	Scopes          []string `json:"scopes,omitempty"`
+
+	// aws_sigv4: sign requests with SigV4 (credentials from the standard AWS chain).
+	Region  string `json:"region,omitempty"`
+	Service string `json:"service,omitempty"` // default "execute-api"
+
+	// mtls: present a client certificate at the transport layer.
+	CertRef string `json:"cert_ref,omitempty"`
+	KeyRef  string `json:"key_ref,omitempty"`
 }
 
 // Enabled reports whether the route authenticates to its upstream.

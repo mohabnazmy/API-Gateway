@@ -122,13 +122,19 @@ func compile(r model.Route, logger *slog.Logger, transport http.RoundTripper) (*
 	if err != nil {
 		return nil, fmt.Errorf("route %q: %w", r.Name, err)
 	}
+	// Transport-layer modes (mTLS) get a per-route transport; everything else
+	// shares the base transport.
+	rt, err := upstreamauth.Transport(r.UpstreamAuth, transport)
+	if err != nil {
+		return nil, fmt.Errorf("route %q: %w", r.Name, err)
+	}
 	limiter, err := ratelimit.New(r.RateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("route %q: %w", r.Name, err)
 	}
 	return &Entry{
 		route:   r,
-		proxy:   newReverseProxy(target, r, logger, transport, authn),
+		proxy:   newReverseProxy(target, r, logger, rt, authn),
 		limiter: limiter,
 	}, nil
 }

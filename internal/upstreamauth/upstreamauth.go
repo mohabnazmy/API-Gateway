@@ -33,12 +33,22 @@ func New(cfg model.UpstreamAuth, defaultAudience string) (Authenticator, error) 
 	switch cfg.Type {
 	case "", "none":
 		return nil, nil
+	case "bearer":
+		return newBearer(cfg)
 	case "google_oidc":
 		audience := cfg.Audience
 		if audience == "" {
 			audience = defaultAudience
 		}
 		return newGoogleOIDC(audience), nil
+	case "oauth2_client_credentials":
+		return newOAuth2(cfg, defaultAudience)
+	case "aws_sigv4":
+		return newSigV4(cfg)
+	case "mtls":
+		// mTLS is applied at the transport layer (see Transport), not by mutating
+		// the request, so there is no request Authenticator for it.
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown upstream_auth type %q", cfg.Type)
 	}

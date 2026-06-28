@@ -166,13 +166,15 @@ Behavior for an existing `google_oidc` route is **identical**; only the wiring m
 
 ## Phasing
 
-1. **Abstraction + port GCP** — introduce `upstreamauth.Authenticator` + registry, move
-   `google_oidc` onto it, legacy-string decode, delete the GCP-specific proxy interface.
-   *No new providers.* Net behavior unchanged; gateway is now provider-neutral by design.
-2. **`bearer` + `oauth2_client_credentials`** — the two most broadly useful, cover most
-   non-GCP private backends (Auth0/Okta/Keycloak/Azure AD and any static-token backend).
-3. **`aws_sigv4`** — implement request signing + body buffering for AWS-private targets.
-4. **`mtls`** — transport-level client certificates.
+1. **Abstraction + port GCP** *(done)* — introduce `upstreamauth.Authenticator` + registry,
+   move `google_oidc` onto it, legacy-string decode, delete the GCP-specific proxy interface.
+   Net behavior unchanged; gateway is now provider-neutral by design.
+2. **`bearer` + `oauth2_client_credentials`** *(done)* — the two most broadly useful, cover
+   most non-GCP private backends (Auth0/Okta/Keycloak/Azure AD and any static-token backend).
+   Includes the `env:`/`file:` secret-ref resolver.
+3. **`aws_sigv4`** *(done)* — request signing + body buffering for AWS-private targets
+   (adds the `aws-sdk-go-v2` dependency).
+4. **`mtls`** *(done)* — transport-level client certificates, via `upstreamauth.Transport`.
 
 Each phase is independently shippable and testable. Phase 1 is the one that resolves the
 "GCP-only" concern; the rest broaden coverage.

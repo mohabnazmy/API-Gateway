@@ -91,27 +91,33 @@ Bootstrap configuration comes from environment variables:
 | `rate_limit.rps` | number | Sustained requests/sec. `rps <= 0` disables limiting. |
 | `rate_limit.burst` | number | Bucket capacity (token/leaky bucket). |
 | `rate_limit.window_sec` | number | Window length for the window algorithms (default `1`); per-window limit = `rps × window_sec`. |
-| `upstream_auth.type` | string | How the gateway authenticates to the upstream: `none` (default) or `google_oidc`. |
-| `upstream_auth.audience` | string | Token audience for token-minting modes. Empty = the upstream origin (`scheme://host`). |
+| `upstream_auth.type` | string | How the gateway authenticates to the upstream (see below); `none` (default). |
 
 #### Upstream authentication
 
 By default the gateway forwards requests to the upstream unauthenticated
 (`upstream_auth.type: "none"`). Set a mode when the upstream itself requires the
-gateway to authenticate:
+gateway to authenticate. Secret-bearing fields end in `_ref` and accept
+`env:NAME`, `file:/path`, or a literal value, so secrets stay out of route JSON.
 
-| Mode | Behavior |
-|------|----------|
-| `none` *(default)* | Forward as-is; no credentials attached. |
-| `google_oidc` | Attach a Google-signed identity token (audience = upstream origin) as a `Bearer` token, so the gateway can call a **private Cloud Run** service. Requires running on GCP (Cloud Run / GCE) where the metadata server is reachable. |
+| Mode | Behavior | Fields |
+|------|----------|--------|
+| `none` *(default)* | Forward as-is; no credentials attached. | — |
+| `bearer` | Attach a static token/API key to a header. | `token_ref`; optional `header` (default `Authorization`), `scheme` (default `Bearer`; `none` = raw value) |
+| `google_oidc` | Attach a Google-signed identity token (audience = upstream origin) as a `Bearer`, to call a **private Cloud Run** service. Requires running on GCP (metadata server reachable). | optional `audience` |
+| `oauth2_client_credentials` | Fetch+cache a token via the OAuth2 client-credentials grant, attach as `Bearer`. Works with Auth0/Okta/Keycloak/Azure AD. | `token_url`, `client_id`, `client_secret_ref`; optional `scopes`, `audience` |
+| `aws_sigv4` | Sign requests with AWS SigV4 to call private AWS targets (API Gateway, Lambda URLs). Credentials from the standard AWS chain (env/role). | `region`; optional `service` (default `execute-api`) |
+| `mtls` | Present a client certificate at the transport layer (mutual TLS). | `cert_ref`, `key_ref` |
 
 ```jsonc
-"upstream_auth": { "type": "google_oidc" }   // audience defaults to the upstream origin
+"upstream_auth": { "type": "oauth2_client_credentials",
+  "token_url": "https://issuer/oauth/token",
+  "client_id": "gw", "client_secret_ref": "env:OAUTH_SECRET",
+  "scopes": ["api.read"] }
 ```
 
 The legacy bare-string form (`"upstream_auth": "google_oidc"`) is still accepted.
-Upstream auth is pluggable — `bearer`, `oauth2_client_credentials`, `aws_sigv4`,
-and `mtls` are planned; see [`docs/upstream-auth-design.md`](docs/upstream-auth-design.md).
+See [`docs/upstream-auth-design.md`](docs/upstream-auth-design.md) for the design.
 
 #### Rate-limit algorithms
 
