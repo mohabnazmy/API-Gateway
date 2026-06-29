@@ -61,6 +61,13 @@ type Config struct {
 
 	LogLevel    string
 	MetricsPath string
+
+	// DBPath is the SQLite config-store file. Routes are seeded from GATEWAY_ROUTES
+	// on first run, then the store is authoritative.
+	DBPath string
+	// ConfigPollInterval, when > 0, polls the store for config changes and
+	// hot-reloads the data plane. 0 disables polling.
+	ConfigPollInterval time.Duration
 }
 
 // Load reads configuration from the environment, applying defaults. The route
@@ -79,6 +86,9 @@ func Load() (*Config, error) {
 
 		UpstreamDialTimeout:     getDuration("GATEWAY_UPSTREAM_DIAL_TIMEOUT", 10*time.Second),
 		UpstreamResponseTimeout: getDuration("GATEWAY_UPSTREAM_RESPONSE_TIMEOUT", 30*time.Second),
+
+		DBPath:             getString("GATEWAY_DB_PATH", "./gateway.db"),
+		ConfigPollInterval: getDuration("GATEWAY_CONFIG_POLL_INTERVAL", 0),
 	}
 	c.APIKeys = parseAPIKeys(os.Getenv("GATEWAY_API_KEYS"))
 

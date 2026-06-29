@@ -9,10 +9,11 @@ Documentation:
 - [`docs/concepts-and-auth-decisions.md`](docs/concepts-and-auth-decisions.md) — plain-language guide to the concepts and auth decisions.
 - [`docs/test-findings.md`](docs/test-findings.md) — adversarial edge-case test results.
 
-> **Status — Phase 1 (data plane).** Reverse-proxy routing, JWT/API-key auth,
-> per-route rate limiting, and observability are implemented. The config store,
-> admin API, and UI (Phases 2–4) are not yet built; routes are loaded once at
-> startup from `GATEWAY_ROUTES`.
+> **Status — Phases 1–2.** Data plane (reverse-proxy routing, JWT/API-key auth,
+> per-route rate limiting, per-route upstream auth, observability) **and** the
+> SQLite config store with hot-reload are implemented. Routes are seeded from
+> `GATEWAY_ROUTES` into the store on first run, then the store is authoritative.
+> The admin API and UI (Phases 3–4) are not yet built.
 
 ## Quick start
 
@@ -75,6 +76,8 @@ Bootstrap configuration comes from environment variables:
 | `GATEWAY_SHUTDOWN_TIMEOUT` | `15s` | Graceful-shutdown drain limit. |
 | `GATEWAY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `GATEWAY_METRICS_PATH` | `/metrics` | Prometheus scrape path. |
+| `GATEWAY_DB_PATH` | `./gateway.db` | SQLite config store. Seeded from `GATEWAY_ROUTES` on first run, then authoritative. Mount on a volume to persist. |
+| `GATEWAY_CONFIG_POLL_INTERVAL` | `0` | When > 0 (e.g. `5s`), poll the store and hot-reload routes on change without a restart. `0` disables polling. |
 
 ### Route object
 
@@ -160,17 +163,20 @@ go vet ./...
 go test ./...
 ```
 
-## Architecture (Phase 1)
+## Architecture
 
 ```
-cmd/gateway        entrypoint: load config, build registry, serve
-internal/model     shared config types (Route, AuthPolicy, RateLimitPolicy)
-internal/config    bootstrap config from env
-internal/registry  live config snapshot, atomically swappable (hot-reload basis)
-internal/proxy     route matching + reverse proxy (the data-plane core)
-internal/ratelimit pluggable rate-limit algorithms behind a Limiter interface
-internal/middleware request ID, recover, logging, metrics, auth, rate limit
-internal/server    wires the middleware chain + operational endpoints
+cmd/gateway          entrypoint: open store, seed, load registry, serve
+internal/model       shared config types (Route, AuthPolicy, RateLimitPolicy)
+internal/config      bootstrap config from env
+internal/store       SQLite config store (durable source of truth) behind a repository interface
+internal/configsync  loads the store into the registry; polls + hot-reloads on change
+internal/registry    live config snapshot, atomically swappable (hot-reload basis)
+internal/proxy       route matching + reverse proxy (the data-plane core)
+internal/upstreamauth per-route upstream authentication (bearer/oidc/oauth2/sigv4/mtls)
+internal/ratelimit   pluggable rate-limit algorithms behind a Limiter interface
+internal/middleware  request ID, recover, logging, metrics, auth, rate limit
+internal/server      wires the middleware chain + operational endpoints
 ```
 
 License: see [LICENSE](LICENSE).
