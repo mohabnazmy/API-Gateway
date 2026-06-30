@@ -11,8 +11,12 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/mohabnazmy/API-Gateway/internal/admin"
 	"github.com/mohabnazmy/API-Gateway/internal/config"
 	"github.com/mohabnazmy/API-Gateway/internal/configsync"
+	"github.com/mohabnazmy/API-Gateway/internal/model"
 	"github.com/mohabnazmy/API-Gateway/internal/proxy"
 	"github.com/mohabnazmy/API-Gateway/internal/registry"
 	"github.com/mohabnazmy/API-Gateway/internal/server"
@@ -68,6 +72,38 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Control plane: seed a bootstrap admin from env (first run only) and, when an
+	// admin JWT secret is configured, serve the Admin API on a separate private
+	// listener (never on the public proxy port).
+	if cfg.AdminUser != "" && cfg.AdminPassword != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			logger.Error("failed to hash bootstrap admin password", "error", err)
+			os.Exit(1)
+		}
+		if seeded, err := store.SeedAdminUser(startupCtx, st,
+			model.AdminUser{Username: cfg.AdminUser, PasswordHash: string(hash), TokenVersion: 1}); err != nil {
+			logger.Error("failed to seed bootstrap admin", "error", err)
+			os.Exit(1)
+		} else if seeded {
+			logger.Info("seeded bootstrap admin user", "username", cfg.AdminUser)
+		}
+	}
+
+	var adminSrv *http.Server
+	if cfg.AdminJWTSecret != "" {
+		adminSvc := admin.NewService(st, cfg.AdminJWTSecret, cfg.AdminTokenTTL, logger)
+		adminSrv = &http.Server{
+			Addr:         cfg.AdminAddr,
+			Handler:      adminSvc.Router(),
+			ReadTimeout:  cfg.ReadTimeout,
+			WriteTimeout: cfg.WriteTimeout,
+			IdleTimeout:  cfg.IdleTimeout,
+		}
+	} else {
+		logger.Warn("admin API disabled: set GATEWAY_ADMIN_JWT_SECRET to enable the control plane")
+	}
+
 	srv := server.New(cfg, reg, logger)
 
 	// Run the server, shutting down gracefully on SIGINT/SIGTERM.
@@ -85,6 +121,14 @@ func main() {
 		logger.Info("gateway listening", "addr", cfg.ProxyAddr)
 		serverErr <- srv.ListenAndServe()
 	}()
+	if adminSrv != nil {
+		go func() {
+			logger.Info("admin api listening", "addr", cfg.AdminAddr)
+			if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErr <- err
+			}
+		}()
+	}
 
 	select {
 	case err := <-serverErr:
@@ -96,6 +140,11 @@ func main() {
 		logger.Info("shutdown signal received, draining connections")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
+		if adminSrv != nil {
+			if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+				logger.Error("admin server shutdown failed", "error", err)
+			}
+		}
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("graceful shutdown failed", "error", err)
 			os.Exit(1)
