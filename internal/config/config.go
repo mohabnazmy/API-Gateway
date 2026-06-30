@@ -68,6 +68,14 @@ type Config struct {
 	// ConfigPollInterval, when > 0, polls the store for config changes and
 	// hot-reloads the data plane. 0 disables polling.
 	ConfigPollInterval time.Duration
+
+	// Admin (control plane). The admin API runs on a separate private listener and
+	// starts only when AdminJWTSecret is set.
+	AdminAddr      string
+	AdminJWTSecret string
+	AdminUser      string
+	AdminPassword  string
+	AdminTokenTTL  time.Duration
 }
 
 // Load reads configuration from the environment, applying defaults. The route
@@ -89,6 +97,12 @@ func Load() (*Config, error) {
 
 		DBPath:             getString("GATEWAY_DB_PATH", "./gateway.db"),
 		ConfigPollInterval: getDuration("GATEWAY_CONFIG_POLL_INTERVAL", 0),
+
+		AdminAddr:      getString("GATEWAY_ADMIN_ADDR", "127.0.0.1:9000"),
+		AdminJWTSecret: getString("GATEWAY_ADMIN_JWT_SECRET", ""),
+		AdminUser:      getString("GATEWAY_ADMIN_USER", ""),
+		AdminPassword:  getString("GATEWAY_ADMIN_PASSWORD", ""),
+		AdminTokenTTL:  getDuration("GATEWAY_ADMIN_TOKEN_TTL", 30*time.Minute),
 	}
 	c.APIKeys = parseAPIKeys(os.Getenv("GATEWAY_API_KEYS"))
 

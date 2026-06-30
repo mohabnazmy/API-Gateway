@@ -78,6 +78,10 @@ Bootstrap configuration comes from environment variables:
 | `GATEWAY_METRICS_PATH` | `/metrics` | Prometheus scrape path. |
 | `GATEWAY_DB_PATH` | `./gateway.db` | SQLite config store. Seeded from `GATEWAY_ROUTES` on first run, then authoritative. Mount on a volume to persist. |
 | `GATEWAY_CONFIG_POLL_INTERVAL` | `0` | When > 0 (e.g. `5s`), poll the store and hot-reload routes on change without a restart. `0` disables polling. |
+| `GATEWAY_ADMIN_ADDR` | `127.0.0.1:9000` | Private admin-API listener (control plane). Keep off the public network. |
+| `GATEWAY_ADMIN_JWT_SECRET` | — | HS256 secret for admin **session** tokens (separate from the data-plane JWT). The admin API starts only when this is set. |
+| `GATEWAY_ADMIN_USER` / `GATEWAY_ADMIN_PASSWORD` | — | First-run bootstrap admin (seeded once; bcrypt-hashed). |
+| `GATEWAY_ADMIN_TOKEN_TTL` | `30m` | Admin session-token lifetime. |
 
 ### Route object
 
