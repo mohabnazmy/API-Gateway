@@ -155,9 +155,39 @@ Every response on a rate-limited route reports the client's consumption (the
 
 ## Endpoints
 
+Public proxy listener (`GATEWAY_PROXY_ADDR`, default `:8080`):
 - `GET /healthz` — liveness (`200 {"status":"ok"}`).
 - `GET /metrics` — Prometheus metrics.
 - everything else — proxied to the matching route's upstream (or `404`).
+
+### Admin API (control plane)
+
+Private listener (`GATEWAY_ADMIN_ADDR`, default `127.0.0.1:9000`); starts only when
+`GATEWAY_ADMIN_JWT_SECRET` is set. All `/admin/api/*` routes except `health` and
+`auth/login` require a Bearer **admin session token** from login. Writes validate,
+persist transactionally, and **hot-reload the data plane immediately**.
+
+```
+POST   /admin/api/auth/login                    → { "token": "..." }   (username/password)
+GET    /admin/api/health
+GET    /admin/api/me
+
+GET    /admin/api/routes              POST   /admin/api/routes
+GET    /admin/api/routes/{name}       PUT    /admin/api/routes/{name}    DELETE …/{name}
+
+GET    /admin/api/plans               POST   /admin/api/plans
+PUT    /admin/api/plans/{id}          DELETE /admin/api/plans/{id}
+
+GET    /admin/api/consumers           POST   /admin/api/consumers
+GET    /admin/api/consumers/{id}      PUT    /admin/api/consumers/{id}   DELETE …/{id}
+
+GET    /admin/api/consumers/{id}/api-keys     # list (metadata only)
+POST   /admin/api/consumers/{id}/api-keys     # issue → returns the key ONCE
+DELETE /admin/api/api-keys/{id}               # revoke
+```
+
+API keys are stored as SHA-256 hashes; the plaintext is shown once at creation.
+The admin UI (Phase 4) and consumer-keyed rate limiting (Phase 3d) build on this.
 
 ## Development
 

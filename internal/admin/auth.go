@@ -24,14 +24,40 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 
 var errUnauthorized = errors.New("unauthorized")
 
-// Store is the admin-user lookup the service needs (satisfied by *store.SQLite).
+// Store is the config store as the admin API needs it (satisfied by *store.SQLite).
 type Store interface {
 	GetAdminUser(ctx context.Context, username string) (model.AdminUser, bool, error)
+
+	ListRoutes(ctx context.Context) ([]model.Route, error)
+	UpsertRoute(ctx context.Context, r model.Route) error
+	DeleteRoute(ctx context.Context, name string) (bool, error)
+
+	ListPlans(ctx context.Context) ([]model.Plan, error)
+	GetPlan(ctx context.Context, id int64) (model.Plan, bool, error)
+	UpsertPlan(ctx context.Context, p model.Plan) (int64, error)
+	DeletePlan(ctx context.Context, id int64) (bool, error)
+
+	ListConsumers(ctx context.Context) ([]model.Consumer, error)
+	GetConsumer(ctx context.Context, id int64) (model.Consumer, bool, error)
+	UpsertConsumer(ctx context.Context, c model.Consumer) (int64, error)
+	DeleteConsumer(ctx context.Context, id int64) (bool, error)
+
+	ListConsumerKeys(ctx context.Context, consumerID int64) ([]model.APIKey, error)
+	CreateAPIKey(ctx context.Context, consumerID int64, name, keyHash string) (int64, error)
+	RevokeAPIKey(ctx context.Context, id int64) (bool, error)
 }
 
-// Service authenticates admins and issues/validates session tokens.
+// Reloader applies the current store config to the live data plane. Admin writes
+// call it so changes take effect immediately (single-node), independent of the
+// version poller.
+type Reloader interface {
+	LoadNow(ctx context.Context) error
+}
+
+// Service authenticates admins, serves the Admin API, and triggers reloads.
 type Service struct {
 	store    Store
+	reloader Reloader
 	secret   []byte
 	tokenTTL time.Duration
 	logger   *slog.Logger
@@ -39,8 +65,19 @@ type Service struct {
 }
 
 // NewService builds the admin service. secret signs session JWTs (HS256).
-func NewService(store Store, secret string, tokenTTL time.Duration, logger *slog.Logger) *Service {
-	return &Service{store: store, secret: []byte(secret), tokenTTL: tokenTTL, logger: logger, now: time.Now}
+func NewService(store Store, reloader Reloader, secret string, tokenTTL time.Duration, logger *slog.Logger) *Service {
+	return &Service{store: store, reloader: reloader, secret: []byte(secret), tokenTTL: tokenTTL, logger: logger, now: time.Now}
+}
+
+// reloadAfterWrite applies the new config to the data plane and logs (but does not
+// fail the request on) a reload error — the write is already durable.
+func (s *Service) reloadAfterWrite(ctx context.Context) {
+	if s.reloader == nil {
+		return
+	}
+	if err := s.reloader.LoadNow(ctx); err != nil {
+		s.logger.Error("hot-reload after admin write failed", "error", err)
+	}
 }
 
 // Login verifies a username/password and returns a signed session token.
