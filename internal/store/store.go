@@ -24,6 +24,29 @@ type Store interface {
 	Version(ctx context.Context) (int64, error)
 	// Close releases the underlying database.
 	Close() error
+
+	// Plans.
+	ListPlans(ctx context.Context) ([]model.Plan, error)
+	GetPlan(ctx context.Context, id int64) (model.Plan, bool, error)
+	UpsertPlan(ctx context.Context, p model.Plan) (int64, error)
+	DeletePlan(ctx context.Context, id int64) (bool, error)
+
+	// Consumers.
+	ListConsumers(ctx context.Context) ([]model.Consumer, error)
+	GetConsumer(ctx context.Context, id int64) (model.Consumer, bool, error)
+	UpsertConsumer(ctx context.Context, c model.Consumer) (int64, error)
+	DeleteConsumer(ctx context.Context, id int64) (bool, error)
+
+	// API keys (stored hashed; plaintext shown once by the admin API).
+	ListConsumerKeys(ctx context.Context, consumerID int64) ([]model.APIKey, error)
+	CreateAPIKey(ctx context.Context, consumerID int64, name, keyHash string) (int64, error)
+	RevokeAPIKey(ctx context.Context, id int64) (bool, error)
+	ResolveAPIKey(ctx context.Context, keyHash string) (model.Consumer, bool, error)
+
+	// Admin users (control-plane; writes here do not bump the config version).
+	ListAdminUsers(ctx context.Context) ([]model.AdminUser, error)
+	GetAdminUser(ctx context.Context, username string) (model.AdminUser, bool, error)
+	UpsertAdminUser(ctx context.Context, u model.AdminUser) (int64, error)
 }
 
 // SeedRoutes imports the given routes only when the store is empty, so a fresh

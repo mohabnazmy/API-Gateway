@@ -79,6 +79,40 @@ CREATE TABLE config_version (
 );
 INSERT INTO config_version (id, version) VALUES (1, 0);
 `},
+	{2, `
+CREATE TABLE plans (
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  rps           REAL NOT NULL,
+  burst         INTEGER NOT NULL,
+  daily_quota   INTEGER,                    -- nullable = unmetered
+  created_at    TEXT NOT NULL
+);
+CREATE TABLE consumers (
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  plan_id       INTEGER REFERENCES plans(id),
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE TABLE api_keys (
+  id            INTEGER PRIMARY KEY,
+  consumer_id   INTEGER NOT NULL REFERENCES consumers(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  key_hash      TEXT NOT NULL UNIQUE,       -- SHA-256 of the key; plaintext never stored
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  revoked_at    TEXT
+);
+CREATE TABLE admin_users (
+  id            INTEGER PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  token_version INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL
+);
+`},
 }
 
 func (s *SQLite) migrate(ctx context.Context) error {
@@ -178,7 +212,7 @@ ON CONFLICT(name) DO UPDATE SET
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO rate_limit_policies (route_id, algorithm, rps, burst, window_sec) VALUES (?, ?, ?, ?, ?)`,
-		id, r.RateLimit.Algorithm, r.RateLimit.RPS, r.RateLimit.Burst, windowSec(r.RateLimit.WindowSec)); err != nil {
+		id, r.RateLimit.Algorithm, r.RateLimit.RPS, r.RateLimit.Burst, nullInt(r.RateLimit.WindowSec)); err != nil {
 		return err
 	}
 	if err := bumpVersion(ctx, tx); err != nil {
@@ -283,7 +317,8 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func windowSec(n int) any {
+// nullInt maps a zero int to SQL NULL so it round-trips back to zero.
+func nullInt(n int) any {
 	if n == 0 {
 		return nil
 	}
