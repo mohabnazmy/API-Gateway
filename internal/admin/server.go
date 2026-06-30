@@ -17,6 +17,27 @@ func (s *Service) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.Middleware)
 		r.Get("/admin/api/me", meHandler)
+
+		r.Get("/admin/api/routes", s.listRoutes)
+		r.Post("/admin/api/routes", s.createRoute)
+		r.Get("/admin/api/routes/{name}", s.getRoute)
+		r.Put("/admin/api/routes/{name}", s.putRoute)
+		r.Delete("/admin/api/routes/{name}", s.deleteRoute)
+
+		r.Get("/admin/api/plans", s.listPlans)
+		r.Post("/admin/api/plans", s.createPlan)
+		r.Put("/admin/api/plans/{id}", s.putPlan)
+		r.Delete("/admin/api/plans/{id}", s.deletePlan)
+
+		r.Get("/admin/api/consumers", s.listConsumers)
+		r.Post("/admin/api/consumers", s.createConsumer)
+		r.Get("/admin/api/consumers/{id}", s.getConsumer)
+		r.Put("/admin/api/consumers/{id}", s.putConsumer)
+		r.Delete("/admin/api/consumers/{id}", s.deleteConsumer)
+
+		r.Get("/admin/api/consumers/{id}/api-keys", s.listKeys)
+		r.Post("/admin/api/consumers/{id}/api-keys", s.createKey)
+		r.Delete("/admin/api/api-keys/{id}", s.revokeKey)
 	})
 	return r
 }

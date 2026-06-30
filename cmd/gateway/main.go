@@ -92,7 +92,7 @@ func main() {
 
 	var adminSrv *http.Server
 	if cfg.AdminJWTSecret != "" {
-		adminSvc := admin.NewService(st, cfg.AdminJWTSecret, cfg.AdminTokenTTL, logger)
+		adminSvc := admin.NewService(st, reloader, cfg.AdminJWTSecret, cfg.AdminTokenTTL, logger)
 		adminSrv = &http.Server{
 			Addr:         cfg.AdminAddr,
 			Handler:      adminSvc.Router(),
