@@ -1,28 +1,37 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/mohabnazmy/API-Gateway/internal/model"
 	"github.com/mohabnazmy/API-Gateway/internal/proxy"
+	"github.com/mohabnazmy/API-Gateway/internal/store"
 )
 
+// KeyResolver maps an API-key hash to the consumer it authenticates (satisfied by
+// *store.SQLite). API keys live in the config store, owned by a consumer.
+type KeyResolver interface {
+	ResolveAPIKey(ctx context.Context, keyHash string) (model.Identity, bool, error)
+}
+
 // Authenticator validates requests for routes that set RequireAuth. It accepts
-// either a Bearer JWT (validated against JWTSecret) or an API key supplied via
-// the X-API-Key header.
+// either a Bearer JWT (validated against JWTSecret) or an API key (X-API-Key)
+// resolved against the store to a consumer.
 type Authenticator struct {
 	jwtSecret []byte
-	apiKeys   map[string]struct{}
+	keys      KeyResolver
 }
 
 // NewAuthenticator builds an Authenticator. Either credential source may be
 // empty; routes requiring auth simply won't accept that credential type.
-func NewAuthenticator(jwtSecret string, apiKeys map[string]struct{}) *Authenticator {
+func NewAuthenticator(jwtSecret string, keys KeyResolver) *Authenticator {
 	return &Authenticator{
 		jwtSecret: []byte(jwtSecret),
-		apiKeys:   apiKeys,
+		keys:      keys,
 	}
 }
 
@@ -36,8 +45,15 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		policy := entry.Route().Auth
-		if (policy.AcceptsAPIKey() && a.validAPIKey(r)) ||
-			(policy.AcceptsJWT() && a.validJWT(r)) {
+		// An API key resolves a consumer; attribute the request to it so rate
+		// limiting can key on the consumer's plan.
+		if policy.AcceptsAPIKey() {
+			if id, ok := a.resolveAPIKey(r); ok {
+				next.ServeHTTP(w, r.WithContext(WithConsumer(r.Context(), id)))
+				return
+			}
+		}
+		if policy.AcceptsJWT() && a.validJWT(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -46,16 +62,19 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func (a *Authenticator) validAPIKey(r *http.Request) bool {
-	if len(a.apiKeys) == 0 {
-		return false
+func (a *Authenticator) resolveAPIKey(r *http.Request) (model.Identity, bool) {
+	if a.keys == nil {
+		return model.Identity{}, false
 	}
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
-		return false
+		return model.Identity{}, false
 	}
-	_, ok := a.apiKeys[key]
-	return ok
+	id, ok, err := a.keys.ResolveAPIKey(r.Context(), store.HashAPIKey(key))
+	if err != nil || !ok {
+		return model.Identity{}, false
+	}
+	return id, true
 }
 
 func (a *Authenticator) validJWT(r *http.Request) bool {

@@ -83,10 +83,10 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		t.Fatalf("list keys: %+v err=%v", keys, err)
 	}
 
-	// Resolve the hash → consumer.
-	c, ok, err := db.ResolveAPIKey(ctx, hash)
-	if err != nil || !ok || c.ID != cid {
-		t.Fatalf("resolve key: c=%+v ok=%v err=%v", c, ok, err)
+	// Resolve the hash → consumer identity.
+	id, ok, err := db.ResolveAPIKey(ctx, hash)
+	if err != nil || !ok || id.ConsumerID != cid {
+		t.Fatalf("resolve key: id=%+v ok=%v err=%v", id, ok, err)
 	}
 	// Unknown hash does not resolve.
 	if _, ok, _ := db.ResolveAPIKey(ctx, HashAPIKey("nope")); ok {
@@ -98,6 +98,30 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	}
 	if _, ok, _ := db.ResolveAPIKey(ctx, hash); ok {
 		t.Fatal("revoked key still resolves")
+	}
+}
+
+func TestResolveAPIKeyIncludesPlanLimit(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	pid, _ := db.UpsertPlan(ctx, model.Plan{Name: "pro", RPS: 500, Burst: 1000})
+	cid, _ := db.UpsertConsumer(ctx, model.Consumer{Name: "acme", PlanID: pid, Enabled: true})
+	if _, err := db.CreateAPIKey(ctx, cid, "prod", HashAPIKey("k")); err != nil {
+		t.Fatal(err)
+	}
+	id, ok, _ := db.ResolveAPIKey(ctx, HashAPIKey("k"))
+	if !ok || id.PlanID != pid || id.Limit.RPS != 500 || id.Limit.Burst != 1000 || !id.Limit.Enabled() {
+		t.Fatalf("identity plan limit wrong: %+v", id)
+	}
+
+	// A consumer with no plan resolves with a disabled limit.
+	cid2, _ := db.UpsertConsumer(ctx, model.Consumer{Name: "noplan", Enabled: true})
+	if _, err := db.CreateAPIKey(ctx, cid2, "p", HashAPIKey("k2")); err != nil {
+		t.Fatal(err)
+	}
+	id2, _, _ := db.ResolveAPIKey(ctx, HashAPIKey("k2"))
+	if id2.Limit.Enabled() {
+		t.Fatalf("no-plan consumer should have a disabled limit: %+v", id2)
 	}
 }
 

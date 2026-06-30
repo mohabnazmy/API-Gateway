@@ -104,7 +104,7 @@ func main() {
 		logger.Warn("admin API disabled: set GATEWAY_ADMIN_JWT_SECRET to enable the control plane")
 	}
 
-	srv := server.New(cfg, reg, logger)
+	srv := server.New(cfg, reg, st, logger)
 
 	// Run the server, shutting down gracefully on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

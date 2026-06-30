@@ -37,9 +37,8 @@ Or configure inline:
 # Build
 go build -o gateway ./cmd/gateway
 
-# Configure a route and a credential, then run
+# Configure a route, then run
 export GATEWAY_PROXY_ADDR=:8080
-export GATEWAY_API_KEYS=secret123
 export GATEWAY_ROUTES='[
   {
     "name": "users",
@@ -54,7 +53,15 @@ export GATEWAY_ROUTES='[
 
 # Try it
 curl -i localhost:8080/healthz
-curl -i -H "X-API-Key: secret123" localhost:8080/api/users/42
+```
+
+API keys now live in the config store and belong to a **consumer** — create them
+via the Admin API (`POST /admin/api/consumers/{id}/api-keys`), which returns the
+plaintext once. A request authenticated by such a key is rate-limited by the
+consumer's **plan**, keyed on the consumer. See [Admin API](#admin-api-control-plane).
+
+```bash
+curl -i -H "X-API-Key: gwk_…" localhost:8080/api/users/42
 ```
 
 ## Configuration (Phase 1)
@@ -66,7 +73,6 @@ Bootstrap configuration comes from environment variables:
 | `GATEWAY_PROXY_ADDR` | `:8080` | Listen address. |
 | `GATEWAY_ROUTES` | `[]` | JSON array of routes (see below). |
 | `GATEWAY_JWT_SECRET` | — | HMAC secret for Bearer-JWT validation. |
-| `GATEWAY_API_KEYS` | — | Comma-separated accepted API keys. |
 | `GATEWAY_RATE_LIMIT_RPS` | `100` | Default per-client rate (routes may override). |
 | `GATEWAY_RATE_LIMIT_BURST` | `200` | Default burst (routes may override). |
 | `GATEWAY_TRUSTED_PROXIES` | — | Comma-separated CIDRs/IPs whose `X-Forwarded-For` is trusted. Empty = trust none (XFF ignored). |

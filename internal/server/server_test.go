@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,11 +13,31 @@ import (
 	"github.com/mohabnazmy/API-Gateway/internal/config"
 	"github.com/mohabnazmy/API-Gateway/internal/model"
 	"github.com/mohabnazmy/API-Gateway/internal/registry"
+	"github.com/mohabnazmy/API-Gateway/internal/store"
 )
 
 const testSecret = "test-secret"
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// fakeKeys resolves a fixed set of plaintext keys to distinct consumers, mirroring
+// the store's hashed lookup.
+type fakeKeys struct{ byHash map[string]model.Identity }
+
+func keysFromPlaintext(keys map[string]struct{}) fakeKeys {
+	m := make(map[string]model.Identity)
+	var i int64 = 1
+	for k := range keys {
+		m[store.HashAPIKey(k)] = model.Identity{ConsumerID: i, ConsumerName: k}
+		i++
+	}
+	return fakeKeys{byHash: m}
+}
+
+func (f fakeKeys) ResolveAPIKey(_ context.Context, hash string) (model.Identity, bool, error) {
+	id, ok := f.byHash[hash]
+	return id, ok, nil
+}
 
 // newTestGateway wires a gateway in front of a stub upstream and returns a live
 // test server plus a cleanup func.
@@ -38,14 +59,14 @@ func newTestGateway(t *testing.T, routes []model.Route) (*httptest.Server, func(
 		ProxyAddr:   ":0",
 		MetricsPath: "/metrics",
 		JWTSecret:   testSecret,
-		APIKeys:     map[string]struct{}{"valid-key": {}},
 		Routes:      routes,
 	}
 	reg := registry.New(discardLogger())
 	if err := reg.Load(cfg.Routes); err != nil {
 		t.Fatalf("load routes: %v", err)
 	}
-	srv := New(cfg, reg, discardLogger())
+	keys := keysFromPlaintext(map[string]struct{}{"valid-key": {}})
+	srv := New(cfg, reg, keys, discardLogger())
 	ts := httptest.NewServer(srv.Handler)
 
 	return ts, func() {
