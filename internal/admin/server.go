@@ -11,6 +11,25 @@ import (
 // guarded by the session-token middleware.
 func (s *Service) Router() http.Handler {
 	r := chi.NewRouter()
+
+	// --- Admin UI (HTML) ---
+	r.Get("/admin/login", s.loginPage)
+	r.Post("/admin/login", s.loginSubmit)
+	r.Handle("/admin/static/*", http.StripPrefix("/admin/static/", staticFS()))
+	r.Group(func(r chi.Router) {
+		r.Use(s.webAuth)
+		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/admin/routes", http.StatusSeeOther)
+		})
+		r.Post("/admin/logout", s.logout)
+		r.Get("/admin/routes", s.routesPage)
+		r.Post("/admin/routes", s.createRouteUI)
+		r.Get("/admin/routes/{name}/edit", s.editRoutePage)
+		r.Put("/admin/routes/{name}", s.updateRouteUI)
+		r.Delete("/admin/routes/{name}", s.deleteRouteUI)
+	})
+
+	// --- Admin API (JSON) ---
 	r.Get("/admin/api/health", healthHandler)
 	r.Post("/admin/api/auth/login", s.loginHandler)
 
