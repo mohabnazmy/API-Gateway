@@ -21,6 +21,8 @@
 <body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
 <nav>
   <a href="/admin/routes">Routes</a>
+  <a href="/admin/plans">Plans</a>
+  <a href="/admin/consumers">Consumers</a>
   {{if .User}}<span class="sp">{{.User}}</span>
   <form class="inline" method="post" action="/admin/logout">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
