@@ -9,11 +9,13 @@ Documentation:
 - [`docs/concepts-and-auth-decisions.md`](docs/concepts-and-auth-decisions.md) — plain-language guide to the concepts and auth decisions.
 - [`docs/test-findings.md`](docs/test-findings.md) — adversarial edge-case test results.
 
-> **Status — Phases 1–2.** Data plane (reverse-proxy routing, JWT/API-key auth,
-> per-route rate limiting, per-route upstream auth, observability) **and** the
-> SQLite config store with hot-reload are implemented. Routes are seeded from
-> `GATEWAY_ROUTES` into the store on first run, then the store is authoritative.
-> The admin API and UI (Phases 3–4) are not yet built.
+> **Status — Phases 1–4 implemented.** Data plane (reverse-proxy routing,
+> JWT/API-key auth, per-route rate limiting, per-route upstream auth,
+> observability), the SQLite config store with hot-reload, the private **Admin
+> API** (routes, plans, consumers, API keys) with consumer/plan-based rate
+> limiting, and a server-rendered **admin UI** (Go templates + HTMX) are all in
+> place. Routes are seeded from `GATEWAY_ROUTES` into the store on first run, then
+> the store is authoritative.
 
 ## Quick start
 
@@ -199,8 +201,9 @@ API keys are stored as SHA-256 hashes; the plaintext is shown once at creation.
 The same private listener serves a server-rendered web UI (Go `html/template` +
 HTMX, embedded — no build step) at **`/admin`**. Log in at `/admin/login` with the
 bootstrap admin; the browser session uses an `HttpOnly` `SameSite=Strict` cookie
-and CSRF-protected forms. The routes screen is live; plans/consumers/keys and a
-metrics dashboard follow in later Phase 4 increments.
+and CSRF-protected forms. Screens: a dashboard (config summary), and full CRUD for
+routes, plans, consumers, and API keys (issue-once / revoke). Live request metrics
+remain at `/metrics` (Prometheus) on the public listener.
 
 ## Development
 

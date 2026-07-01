@@ -18,9 +18,7 @@ func (s *Service) Router() http.Handler {
 	r.Handle("/admin/static/*", http.StripPrefix("/admin/static/", staticFS()))
 	r.Group(func(r chi.Router) {
 		r.Use(s.webAuth)
-		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/admin/routes", http.StatusSeeOther)
-		})
+		r.Get("/admin", s.dashboardPage)
 		r.Post("/admin/logout", s.logout)
 		r.Get("/admin/routes", s.routesPage)
 		r.Post("/admin/routes", s.createRouteUI)

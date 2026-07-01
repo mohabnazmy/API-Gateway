@@ -1,0 +1,10 @@
+{{define "dashboard"}}{{template "header" .}}
+<h1>Dashboard</h1>
+<div class="cards">
+  <a class="card" href="/admin/routes"><div class="n">{{.Stats.Routes}}</div><div>Routes</div></a>
+  <a class="card" href="/admin/plans"><div class="n">{{.Stats.Plans}}</div><div>Plans</div></a>
+  <a class="card" href="/admin/consumers"><div class="n">{{.Stats.Consumers}}</div><div>Consumers</div></a>
+</div>
+<p>Live request metrics are exported in Prometheus format at <code>/metrics</code>
+on the public proxy listener.</p>
+{{template "footer" .}}{{end}}

@@ -16,10 +16,14 @@
   form.inline{display:inline} .err{color:#b00}
   input,select{padding:.35rem;margin:.15rem .3rem .15rem 0} button{padding:.35rem .8rem;cursor:pointer}
   .row-form input{width:auto}
+  .cards{display:flex;gap:1rem;margin:1rem 0}
+  .card{display:block;border:1px solid #ddd;border-radius:8px;padding:1rem 1.5rem;text-decoration:none;color:#222;min-width:110px}
+  .card:hover{border-color:#348} .card .n{font-size:2rem;font-weight:600;color:#348}
 </style>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
 <nav>
+  <a href="/admin">Dashboard</a>
   <a href="/admin/routes">Routes</a>
   <a href="/admin/plans">Plans</a>
   <a href="/admin/consumers">Consumers</a>
