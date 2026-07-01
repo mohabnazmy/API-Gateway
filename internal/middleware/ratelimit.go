@@ -10,12 +10,15 @@ import (
 	"github.com/mohabnazmy/API-Gateway/internal/ratelimit"
 )
 
-// RateLimit applies the matched route's limiter, keyed by the resolved client IP
-// (see RealIP). On every rate-limited request it sets standard rate-limit
-// headers (RateLimit-Limit/Remaining/Reset, plus X-RateLimit-* for
-// compatibility) so clients can see their consumption and when capacity
-// returns. Over-limit requests get 429 with a Retry-After header.
-func RateLimit(ip *RealIP) func(http.Handler) http.Handler {
+// RateLimit limits requests and sets standard rate-limit headers
+// (RateLimit-Limit/Remaining/Reset, plus X-RateLimit-* for compatibility);
+// over-limit requests get 429 with Retry-After.
+//
+// Keying: a request attributed to a consumer (via API key) is limited by the
+// consumer's plan and keyed on the consumer, so each customer gets a bucket
+// sized to their tier shared across their keys and routes. Anonymous/JWT
+// requests use the route's limit keyed by client IP. Auth must run before this.
+func RateLimit(ip *RealIP, consumers *ConsumerLimiters) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			entry, ok := proxy.EntryFromContext(r.Context())
@@ -23,13 +26,21 @@ func RateLimit(ip *RealIP) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+
 			limiter := entry.Limiter()
+			key := ip.From(r)
+			if id, ok := ConsumerFromContext(r.Context()); ok {
+				key = consumerRateKey(id)
+				if pl := consumers.For(id); pl != nil {
+					limiter = pl // plan limit overrides the route limit for this consumer
+				}
+			}
 			if limiter == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			allowed, res := limiter.Allow(ip.From(r))
+			allowed, res := limiter.Allow(key)
 			setRateLimitHeaders(w, res)
 			if !allowed {
 				if res.RetryAfter > 0 {

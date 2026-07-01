@@ -9,12 +9,14 @@ func TestLoadRejectsInvalidRoutesJSON(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsRequireAuthWithoutCredentials(t *testing.T) {
+// API keys now live in the config store (created via the Admin API), so a
+// require_auth route no longer needs startup-time credentials configured —
+// credential validity is a runtime concern, not a load-time one.
+func TestLoadAcceptsRequireAuthWithoutStartupCredentials(t *testing.T) {
 	t.Setenv("GATEWAY_JWT_SECRET", "")
-	t.Setenv("GATEWAY_API_KEYS", "")
 	t.Setenv("GATEWAY_ROUTES", `[{"name":"a","path_prefix":"/a","upstream":"http://x:1","auth":{"require_auth":true}}]`)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected an error: require_auth set but no credentials configured")
+	if _, err := Load(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -29,7 +31,6 @@ func TestLoadRejectsRelativePathPrefix(t *testing.T) {
 // labels / log fields).
 func TestLoadRejectsDuplicateRouteNames(t *testing.T) {
 	t.Setenv("GATEWAY_JWT_SECRET", "")
-	t.Setenv("GATEWAY_API_KEYS", "")
 	t.Setenv("GATEWAY_ROUTES", `[
 		{"name":"dup","path_prefix":"/a","upstream":"http://x:1"},
 		{"name":"dup","path_prefix":"/b","upstream":"http://x:1"}
@@ -43,7 +44,6 @@ func TestLoadRejectsDuplicateRouteNames(t *testing.T) {
 // rejected, since the second would be silently unreachable.
 func TestLoadRejectsShadowingPathPrefix(t *testing.T) {
 	t.Setenv("GATEWAY_JWT_SECRET", "")
-	t.Setenv("GATEWAY_API_KEYS", "")
 	t.Setenv("GATEWAY_ROUTES", `[
 		{"name":"first","path_prefix":"/same","upstream":"http://x:1"},
 		{"name":"second","path_prefix":"/same","upstream":"http://y:1"}
@@ -57,7 +57,6 @@ func TestLoadRejectsShadowingPathPrefix(t *testing.T) {
 // upstreams) and must be accepted.
 func TestLoadAcceptsSamePrefixDisjointMethods(t *testing.T) {
 	t.Setenv("GATEWAY_JWT_SECRET", "")
-	t.Setenv("GATEWAY_API_KEYS", "")
 	t.Setenv("GATEWAY_ROUTES", `[
 		{"name":"reads","path_prefix":"/same","upstream":"http://x:1","methods":["GET"]},
 		{"name":"writes","path_prefix":"/same","upstream":"http://y:1","methods":["POST"]}

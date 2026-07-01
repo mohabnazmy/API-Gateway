@@ -33,13 +33,13 @@ func gatewayWith(t *testing.T, apiKeys map[string]struct{}, trusted []*net.IPNet
 	}
 	cfg := &config.Config{
 		ProxyAddr: ":0", MetricsPath: "/metrics",
-		JWTSecret: testSecret, APIKeys: apiKeys, TrustedProxies: trusted, Routes: routes,
+		JWTSecret: testSecret, TrustedProxies: trusted, Routes: routes,
 	}
 	reg := registry.New(discardLogger())
 	if err := reg.Load(cfg.Routes); err != nil {
 		t.Fatalf("load routes: %v", err)
 	}
-	srv := New(cfg, reg, discardLogger())
+	srv := New(cfg, reg, keysFromPlaintext(apiKeys), discardLogger())
 	ts := httptest.NewServer(srv.Handler)
 	return ts, func() { ts.Close(); be.Close() }
 }

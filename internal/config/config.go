@@ -49,7 +49,6 @@ type Config struct {
 	Routes []model.Route
 
 	JWTSecret string
-	APIKeys   map[string]struct{}
 
 	// TrustedProxies are networks whose X-Forwarded-For header is trusted for
 	// client-IP resolution. Empty means trust none (XFF ignored).
@@ -104,8 +103,6 @@ func Load() (*Config, error) {
 		AdminPassword:  getString("GATEWAY_ADMIN_PASSWORD", ""),
 		AdminTokenTTL:  getDuration("GATEWAY_ADMIN_TOKEN_TTL", 30*time.Minute),
 	}
-	c.APIKeys = parseAPIKeys(os.Getenv("GATEWAY_API_KEYS"))
-
 	trusted, err := parseTrustedProxies(os.Getenv("GATEWAY_TRUSTED_PROXIES"))
 	if err != nil {
 		return nil, fmt.Errorf("GATEWAY_TRUSTED_PROXIES: %w", err)
@@ -144,9 +141,6 @@ func (c *Config) validate() error {
 			return fmt.Errorf("routes[%d] (%q): path_prefix must start with '/'", i, r.Name)
 		case r.Upstream == "":
 			return fmt.Errorf("routes[%d] (%q): upstream is required", i, r.Name)
-		}
-		if r.Auth.RequireAuth && c.JWTSecret == "" && len(c.APIKeys) == 0 {
-			return fmt.Errorf("routes[%d] (%q): require_auth is set but no GATEWAY_JWT_SECRET or GATEWAY_API_KEYS configured", i, r.Name)
 		}
 		// W6: route names must be unique (used as metric labels / log fields).
 		if r.Name != "" {
@@ -223,16 +217,6 @@ func parseRoutes(raw string) ([]model.Route, error) {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 	return routes, nil
-}
-
-func parseAPIKeys(raw string) map[string]struct{} {
-	keys := make(map[string]struct{})
-	for _, k := range strings.Split(raw, ",") {
-		if k = strings.TrimSpace(k); k != "" {
-			keys[k] = struct{}{}
-		}
-	}
-	return keys
 }
 
 func getString(key, def string) string {

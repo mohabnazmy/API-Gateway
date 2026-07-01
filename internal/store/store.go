@@ -41,7 +41,7 @@ type Store interface {
 	ListConsumerKeys(ctx context.Context, consumerID int64) ([]model.APIKey, error)
 	CreateAPIKey(ctx context.Context, consumerID int64, name, keyHash string) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (bool, error)
-	ResolveAPIKey(ctx context.Context, keyHash string) (model.Consumer, bool, error)
+	ResolveAPIKey(ctx context.Context, keyHash string) (model.Identity, bool, error)
 
 	// Admin users (control-plane; writes here do not bump the config version).
 	ListAdminUsers(ctx context.Context) ([]model.AdminUser, error)

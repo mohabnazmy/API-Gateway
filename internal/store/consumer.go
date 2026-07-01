@@ -178,18 +178,35 @@ func (s *SQLite) RevokeAPIKey(ctx context.Context, id int64) (bool, error) {
 		`UPDATE api_keys SET enabled = 0, revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND revoked_at IS NULL`, id)
 }
 
-// ResolveAPIKey maps a key hash to its consumer, ignoring revoked/disabled keys
-// and disabled consumers. This is the data-plane hot-path lookup.
-func (s *SQLite) ResolveAPIKey(ctx context.Context, keyHash string) (model.Consumer, bool, error) {
+// ResolveAPIKey maps a key hash to the consumer it authenticates, together with
+// the rate limit from the consumer's plan (joined in one query). It ignores
+// revoked/disabled keys and disabled consumers. This is the data-plane hot path.
+func (s *SQLite) ResolveAPIKey(ctx context.Context, keyHash string) (model.Identity, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT c.id, c.name, c.plan_id, c.enabled
-FROM api_keys k JOIN consumers c ON c.id = k.consumer_id
+SELECT c.id, c.name, c.plan_id, p.rps, p.burst
+FROM api_keys k
+JOIN consumers c ON c.id = k.consumer_id
+LEFT JOIN plans p ON p.id = c.plan_id
 WHERE k.key_hash = ? AND k.enabled = 1 AND k.revoked_at IS NULL AND c.enabled = 1`, keyHash)
-	c, err := scanConsumer(row)
+
+	var (
+		id     model.Identity
+		planID sql.NullInt64
+		rps    sql.NullFloat64
+		burst  sql.NullInt64
+	)
+	err := row.Scan(&id.ConsumerID, &id.ConsumerName, &planID, &rps, &burst)
 	if err == sql.ErrNoRows {
-		return model.Consumer{}, false, nil
+		return model.Identity{}, false, nil
 	}
-	return c, err == nil, err
+	if err != nil {
+		return model.Identity{}, false, err
+	}
+	id.PlanID = planID.Int64
+	if rps.Valid && rps.Float64 > 0 {
+		id.Limit = model.RateLimitPolicy{Algorithm: "token_bucket", RPS: rps.Float64, Burst: int(burst.Int64)}
+	}
+	return id, true, nil
 }
 
 // --- admin users (do NOT bump config_version: not data-plane config) ---

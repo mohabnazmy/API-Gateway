@@ -21,12 +21,13 @@ import (
 // New builds the public data-plane HTTP server. It reads all route config from
 // the registry, so a future hot-reload swaps config without rebuilding the
 // server. The returned server is ready to ListenAndServe.
-func New(cfg *config.Config, reg *registry.Registry, logger *slog.Logger) *http.Server {
+func New(cfg *config.Config, reg *registry.Registry, keys middleware.KeyResolver, logger *slog.Logger) *http.Server {
 	promReg := prometheus.NewRegistry()
 	promReg.MustRegister(collectors.NewGoCollector())
 	metrics := middleware.NewMetrics(promReg)
-	auth := middleware.NewAuthenticator(cfg.JWTSecret, cfg.APIKeys)
+	auth := middleware.NewAuthenticator(cfg.JWTSecret, keys)
 	realIP := middleware.NewRealIP(cfg.TrustedProxies)
+	consumers := middleware.NewConsumerLimiters()
 
 	r := chi.NewRouter()
 
@@ -43,8 +44,10 @@ func New(cfg *config.Config, reg *registry.Registry, logger *slog.Logger) *http.
 		r.Use(proxy.Resolve(reg))
 		r.Use(middleware.Logging(logger, realIP))
 		r.Use(metrics.Middleware)
-		r.Use(middleware.RateLimit(realIP))
+		// Auth runs before rate limiting so the limiter can key on the resolved
+		// consumer (and its plan), not just the client IP.
 		r.Use(auth.Middleware)
+		r.Use(middleware.RateLimit(realIP, consumers))
 		r.Handle("/*", http.HandlerFunc(proxy.Dispatch))
 	})
 
