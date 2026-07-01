@@ -29,11 +29,22 @@ func staticFS() http.Handler {
 // pageData is the view model shared by every admin page. Common fields (User,
 // CSRF) feed the layout; the rest are page-specific.
 type pageData struct {
-	User   string
-	CSRF   string
-	Error  string
+	User  string
+	CSRF  string
+	Error string
+
 	Routes []model.Route
 	Route  model.Route
+
+	Plans []model.Plan
+	Plan  model.Plan
+
+	Consumers []model.Consumer
+	Consumer  model.Consumer
+	PlanNames map[int64]string // plan id → name, for rendering a consumer's tier
+
+	Keys   []model.APIKey
+	NewKey string // plaintext of a just-issued key, shown exactly once
 }
 
 // render writes a named template. It buffers first so a template error yields a

@@ -1,0 +1,73 @@
+{{define "consumers"}}{{template "header" .}}
+<h1>Consumers</h1>
+{{template "consumers_frag" .}}
+<h2>Add a consumer</h2>
+<form class="row-form" hx-post="/admin/consumers" hx-target="#consumers" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input name="name" placeholder="name" required>
+  <select name="plan_id">
+    <option value="0">&mdash; no plan &mdash;</option>
+    {{range .Plans}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+  </select>
+  <label><input type="checkbox" name="enabled" value="true" checked> enabled</label>
+  <button type="submit">Create</button>
+</form>
+{{template "footer" .}}{{end}}
+
+{{define "consumers_frag"}}<div id="consumers">
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<table>
+  <thead><tr><th>Name</th><th>Plan</th><th>Enabled</th><th></th></tr></thead>
+  <tbody>
+  {{range .Consumers}}<tr>
+    <td>{{.Name}}</td>
+    <td>{{if .PlanID}}{{index $.PlanNames .PlanID}}{{else}}&mdash;{{end}}</td>
+    <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+    <td>
+      <a href="/admin/consumers/{{.ID}}/edit">edit / keys</a>
+      <button hx-delete="/admin/consumers/{{.ID}}" hx-target="#consumers" hx-swap="outerHTML"
+              hx-confirm="Delete consumer {{.Name}}?">delete</button>
+    </td>
+  </tr>{{else}}<tr><td colspan="4">No consumers yet.</td></tr>{{end}}
+  </tbody>
+</table>
+</div>{{end}}
+
+{{define "consumer_edit"}}{{template "header" .}}
+<h1>Edit consumer: {{.Consumer.Name}}</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form hx-put="/admin/consumers/{{.Consumer.ID}}" hx-swap="none">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <div><label>Name <input name="name" value="{{.Consumer.Name}}" required></label></div>
+  <div><label>Plan
+    <select name="plan_id">
+      <option value="0">&mdash; no plan &mdash;</option>
+      {{range .Plans}}<option value="{{.ID}}" {{if eq .ID $.Consumer.PlanID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select></label></div>
+  <label><input type="checkbox" name="enabled" value="true" {{if .Consumer.Enabled}}checked{{end}}> enabled</label>
+  <div style="margin-top:.6rem"><button type="submit">Save</button> <a href="/admin/consumers">back</a></div>
+</form>
+
+<h2>API keys</h2>
+{{template "keys_frag" .}}
+<form hx-post="/admin/consumers/{{.Consumer.ID}}/api-keys" hx-target="#keys" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input name="name" placeholder="key label (e.g. prod)" required>
+  <button type="submit">Issue key</button>
+</form>
+{{template "footer" .}}{{end}}
+
+{{define "keys_frag"}}<div id="keys">
+{{if .NewKey}}<p class="err">Copy this key now &mdash; it is shown only once:<br><code>{{.NewKey}}</code></p>{{end}}
+<table>
+  <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Keys}}<tr>
+    <td>{{.Name}}</td>
+    <td>{{if .Revoked}}revoked{{else if .Enabled}}active{{else}}disabled{{end}}</td>
+    <td>{{if not .Revoked}}<button hx-delete="/admin/api-keys/{{.ID}}?consumer={{.ConsumerID}}"
+            hx-target="#keys" hx-swap="outerHTML" hx-confirm="Revoke key {{.Name}}?">revoke</button>{{end}}</td>
+  </tr>{{else}}<tr><td colspan="3">No keys yet.</td></tr>{{end}}
+  </tbody>
+</table>
+</div>{{end}}

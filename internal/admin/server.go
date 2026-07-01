@@ -27,6 +27,20 @@ func (s *Service) Router() http.Handler {
 		r.Get("/admin/routes/{name}/edit", s.editRoutePage)
 		r.Put("/admin/routes/{name}", s.updateRouteUI)
 		r.Delete("/admin/routes/{name}", s.deleteRouteUI)
+
+		r.Get("/admin/plans", s.plansPage)
+		r.Post("/admin/plans", s.createPlanUI)
+		r.Get("/admin/plans/{id}/edit", s.editPlanPage)
+		r.Put("/admin/plans/{id}", s.updatePlanUI)
+		r.Delete("/admin/plans/{id}", s.deletePlanUI)
+
+		r.Get("/admin/consumers", s.consumersPage)
+		r.Post("/admin/consumers", s.createConsumerUI)
+		r.Get("/admin/consumers/{id}/edit", s.editConsumerPage)
+		r.Put("/admin/consumers/{id}", s.updateConsumerUI)
+		r.Delete("/admin/consumers/{id}", s.deleteConsumerUI)
+		r.Post("/admin/consumers/{id}/api-keys", s.createKeyUI)
+		r.Delete("/admin/api-keys/{id}", s.revokeKeyUI)
 	})
 
 	// --- Admin API (JSON) ---

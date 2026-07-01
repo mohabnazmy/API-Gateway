@@ -1,0 +1,44 @@
+{{define "plans"}}{{template "header" .}}
+<h1>Plans</h1>
+{{template "plans_frag" .}}
+<h2>Add a plan</h2>
+<form class="row-form" hx-post="/admin/plans" hx-target="#plans" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input name="name" placeholder="name" required>
+  <input name="rps" type="number" step="any" placeholder="rps" required>
+  <input name="burst" type="number" placeholder="burst" required>
+  <input name="daily_quota" type="number" placeholder="daily quota (optional)">
+  <button type="submit">Create</button>
+</form>
+{{template "footer" .}}{{end}}
+
+{{define "plans_frag"}}<div id="plans">
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<table>
+  <thead><tr><th>Name</th><th>RPS</th><th>Burst</th><th>Daily quota</th><th></th></tr></thead>
+  <tbody>
+  {{range .Plans}}<tr>
+    <td>{{.Name}}</td><td>{{.RPS}}</td><td>{{.Burst}}</td>
+    <td>{{if .DailyQuota}}{{.DailyQuota}}{{else}}&mdash;{{end}}</td>
+    <td>
+      <a href="/admin/plans/{{.ID}}/edit">edit</a>
+      <button hx-delete="/admin/plans/{{.ID}}" hx-target="#plans" hx-swap="outerHTML"
+              hx-confirm="Delete plan {{.Name}}?">delete</button>
+    </td>
+  </tr>{{else}}<tr><td colspan="5">No plans yet.</td></tr>{{end}}
+  </tbody>
+</table>
+</div>{{end}}
+
+{{define "plan_edit"}}{{template "header" .}}
+<h1>Edit plan: {{.Plan.Name}}</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form hx-put="/admin/plans/{{.Plan.ID}}" hx-swap="none">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <div><label>Name <input name="name" value="{{.Plan.Name}}" required></label></div>
+  <div><label>RPS <input name="rps" type="number" step="any" value="{{.Plan.RPS}}" required></label></div>
+  <div><label>Burst <input name="burst" type="number" value="{{.Plan.Burst}}" required></label></div>
+  <div><label>Daily quota <input name="daily_quota" type="number" value="{{if .Plan.DailyQuota}}{{.Plan.DailyQuota}}{{end}}"></label></div>
+  <div style="margin-top:.6rem"><button type="submit">Save</button> <a href="/admin/plans">cancel</a></div>
+</form>
+{{template "footer" .}}{{end}}
