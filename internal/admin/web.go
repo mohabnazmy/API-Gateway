@@ -56,6 +56,27 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 
+func (s *Service) dashboardPage(w http.ResponseWriter, r *http.Request) {
+	routes, err := s.store.ListRoutes(r.Context())
+	if err != nil {
+		s.serverError(w, "dashboard", err)
+		return
+	}
+	plans, err := s.store.ListPlans(r.Context())
+	if err != nil {
+		s.serverError(w, "dashboard", err)
+		return
+	}
+	consumers, err := s.store.ListConsumers(r.Context())
+	if err != nil {
+		s.serverError(w, "dashboard", err)
+		return
+	}
+	s.render(w, http.StatusOK, "dashboard", s.page(r, pageData{
+		Stats: stats{Routes: len(routes), Plans: len(plans), Consumers: len(consumers)},
+	}))
+}
+
 func (s *Service) routesPage(w http.ResponseWriter, r *http.Request) {
 	routes, err := s.store.ListRoutes(r.Context())
 	if err != nil {

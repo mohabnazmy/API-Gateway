@@ -45,6 +45,15 @@ type pageData struct {
 
 	Keys   []model.APIKey
 	NewKey string // plaintext of a just-issued key, shown exactly once
+
+	Stats stats // dashboard summary counts
+}
+
+// stats are the control-plane object counts shown on the dashboard.
+type stats struct {
+	Routes    int
+	Plans     int
+	Consumers int
 }
 
 // render writes a named template. It buffers first so a template error yields a
