@@ -193,7 +193,14 @@ DELETE /admin/api/api-keys/{id}               # revoke
 ```
 
 API keys are stored as SHA-256 hashes; the plaintext is shown once at creation.
-The admin UI (Phase 4) and consumer-keyed rate limiting (Phase 3d) build on this.
+
+### Admin UI
+
+The same private listener serves a server-rendered web UI (Go `html/template` +
+HTMX, embedded — no build step) at **`/admin`**. Log in at `/admin/login` with the
+bootstrap admin; the browser session uses an `HttpOnly` `SameSite=Strict` cookie
+and CSRF-protected forms. The routes screen is live; plans/consumers/keys and a
+metrics dashboard follow in later Phase 4 increments.
 
 ## Development
 

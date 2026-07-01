@@ -137,11 +137,26 @@ type ctxKey int
 
 const userCtxKey ctxKey = 0
 
+// sessionCookie carries the admin JWT for the browser UI (the API uses Bearer).
+const sessionCookie = "admin_session"
+
+// tokenFromRequest reads the session token from the Authorization header (API)
+// or the session cookie (browser UI).
+func (s *Service) tokenFromRequest(r *http.Request) string {
+	if t := bearerToken(r); t != "" {
+		return t
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
 // Middleware rejects requests without a valid admin session token (401) and
 // stashes the authenticated username in the request context.
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenStr := bearerToken(r)
+		tokenStr := s.tokenFromRequest(r)
 		if tokenStr == "" {
 			writeError(w, http.StatusUnauthorized, "missing bearer token")
 			return

@@ -1,0 +1,34 @@
+{{define "routes"}}{{template "header" .}}
+<h1>Routes</h1>
+{{template "routes_frag" .}}
+<h2>Add a route</h2>
+<form class="row-form" hx-post="/admin/routes" hx-target="#routes" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input name="name" placeholder="name" required>
+  <input name="path_prefix" placeholder="/api/x" required>
+  <input name="upstream" placeholder="http://host:port" required>
+  <label><input type="checkbox" name="strip_prefix" value="true"> strip prefix</label>
+  <label><input type="checkbox" name="require_auth" value="true"> require auth</label>
+  <button type="submit">Create</button>
+</form>
+{{template "footer" .}}{{end}}
+
+{{define "routes_frag"}}<div id="routes">
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<table>
+  <thead><tr><th>Name</th><th>Prefix</th><th>Upstream</th><th>Auth</th><th></th></tr></thead>
+  <tbody>
+  {{range .Routes}}<tr>
+    <td>{{.Name}}</td>
+    <td>{{.PathPrefix}}</td>
+    <td>{{.Upstream}}</td>
+    <td>{{if .Auth.RequireAuth}}required{{else}}public{{end}}</td>
+    <td>
+      <a href="/admin/routes/{{.Name}}/edit">edit</a>
+      <button hx-delete="/admin/routes/{{.Name}}" hx-target="#routes" hx-swap="outerHTML"
+              hx-confirm="Delete route {{.Name}}?">delete</button>
+    </td>
+  </tr>{{else}}<tr><td colspan="5">No routes yet.</td></tr>{{end}}
+  </tbody>
+</table>
+</div>{{end}}

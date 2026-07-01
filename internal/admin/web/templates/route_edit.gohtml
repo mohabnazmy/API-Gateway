@@ -1,0 +1,12 @@
+{{define "route_edit"}}{{template "header" .}}
+<h1>Edit route: {{.Route.Name}}</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form hx-put="/admin/routes/{{.Route.Name}}" hx-swap="none">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <div><label>Path prefix <input name="path_prefix" value="{{.Route.PathPrefix}}" required></label></div>
+  <div><label>Upstream <input name="upstream" value="{{.Route.Upstream}}" required></label></div>
+  <label><input type="checkbox" name="strip_prefix" value="true" {{if .Route.StripPrefix}}checked{{end}}> strip prefix</label>
+  <label><input type="checkbox" name="require_auth" value="true" {{if .Route.Auth.RequireAuth}}checked{{end}}> require auth</label>
+  <div style="margin-top:.6rem"><button type="submit">Save</button> <a href="/admin/routes">cancel</a></div>
+</form>
+{{template "footer" .}}{{end}}
